@@ -2,6 +2,10 @@ import Foundation
 import SwiftUI
 
 #if os(macOS)
+import AppKit
+#endif
+
+#if os(macOS)
 let TrixActiveCallWindowID = "trix-active-call"
 #endif
 
@@ -119,7 +123,12 @@ struct TrixActiveCallSurfaceHost: View {
                     .padding(.bottom, 8)
                 }
             }
-            .background(.regularMaterial)
+            .background {
+                if placement == .workspace {
+                    Rectangle()
+                        .fill(.regularMaterial)
+                }
+            }
             .onAppear {
                 TrixForegroundCallRinger.playIfNeeded(presentation?.state.foregroundCue ?? .none)
             }
@@ -178,10 +187,12 @@ private struct TrixActiveCallBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TrixDesign.primarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(barBackground, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                if placement == .workspace {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityLabel(now: context.date))
@@ -216,16 +227,77 @@ private struct TrixActiveCallBar: View {
                 .disabled(model.callViewModel.isActing(roomID: presentation.roomID))
             }
         case .active, .outgoing:
-            Button(role: .destructive) {
-                Task {
-                    await model.leaveCall(roomID: presentation.roomID)
+            HStack(spacing: 6) {
+                Button {
+                    Task {
+                        await model.setCallMicrophoneMuted(
+                            presentation.state.localAudioState != .muted,
+                            roomID: presentation.roomID
+                        )
+                    }
+                } label: {
+                    Image(systemName: presentation.state.localAudioState == .muted ? "mic.slash.fill" : "mic.fill")
+                        .frame(width: 30, height: 30)
                 }
-            } label: {
-                Label("End", systemImage: "phone.down.fill")
+                .buttonStyle(.bordered)
+                .disabled(isWorking || presentation.state.localAudioState == .unavailable)
+                .help(presentation.state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+                .accessibilityLabel(presentation.state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+
+                if presentation.state.kind == .directVideo {
+                    Button {
+                        Task {
+                            await model.setCallCameraEnabled(
+                                presentation.state.localCameraState != .on,
+                                roomID: presentation.roomID
+                            )
+                        }
+                    } label: {
+                        Image(systemName: presentation.state.localCameraState == .on ? "video.fill" : "video.slash.fill")
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isWorking || presentation.state.localCameraState == .unavailable)
+                    .help(presentation.state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
+                    .accessibilityLabel(presentation.state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
+                }
+
+                Button(role: .destructive) {
+                    Task {
+                        await model.leaveCall(roomID: presentation.roomID)
+                    }
+                } label: {
+                    Label("End", systemImage: "phone.down.fill")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isWorking)
+                .help("End")
+                .accessibilityLabel("End call")
             }
-            .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(model.callViewModel.isActing(roomID: presentation.roomID))
+        }
+    }
+
+    private var isWorking: Bool {
+        presentation.state.isActing || model.callViewModel.isActing(roomID: presentation.roomID)
+    }
+
+    private var barBackground: Color {
+        switch placement {
+        case .workspace:
+            return TrixDesign.primarySurface
+        case .utilityWindow:
+            return TrixDesign.elevatedFieldSurface
+        }
+    }
+
+    private var cornerRadius: CGFloat {
+        switch placement {
+        case .workspace:
+            return 8
+        case .utilityWindow:
+            return 14
         }
     }
 
@@ -319,21 +391,49 @@ struct TrixMacActiveCallWindow: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            if TrixActiveCallPresentation.presentation(model: model) == nil,
-               callViewModel.errorMessage == nil {
-                ContentUnavailableView(
-                    "No Active Call",
-                    systemImage: "phone",
-                    description: Text("Active encrypted calls appear here while the main window is hidden or minimized.")
-                )
-            } else {
+        Group {
+            if TrixActiveCallPresentation.presentation(model: model) != nil || callViewModel.errorMessage != nil {
                 TrixActiveCallSurfaceHost(model: model, placement: .utilityWindow)
+                    .padding(10)
+                    .frame(width: 430)
+            } else {
+                EmptyView()
+                    .frame(width: 1, height: 1)
             }
         }
-        .padding(14)
-        .frame(width: 380)
-        .background(TrixDesign.screenBackground)
+        .background(TrixActiveCallWindowConfigurator())
+    }
+}
+
+private struct TrixActiveCallWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        configureSoon(from: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        configureSoon(from: nsView)
+    }
+
+    private func configureSoon(from view: NSView) {
+        DispatchQueue.main.async {
+            guard let window = view.window else {
+                return
+            }
+
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.isMovableByWindowBackground = true
+            window.backgroundColor = .clear
+            window.isOpaque = false
+            window.hasShadow = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.styleMask.remove(.titled)
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+        }
     }
 }
 #endif

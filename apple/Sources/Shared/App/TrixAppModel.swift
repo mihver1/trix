@@ -1190,8 +1190,18 @@ final class TrixAppModel: ObservableObject {
     }
 
     @discardableResult
+    func setCallMicrophoneMuted(_ muted: Bool, roomID: String) async -> Bool {
+        await callViewModel.setMicrophoneMuted(muted, roomID: roomID)
+    }
+
+    @discardableResult
     func setCallCameraEnabled(_ enabled: Bool, in room: TrixRoomSummary) async -> Bool {
         await callViewModel.setCameraEnabled(enabled, roomID: room.id)
+    }
+
+    @discardableResult
+    func setCallCameraEnabled(_ enabled: Bool, roomID: String) async -> Bool {
+        await callViewModel.setCameraEnabled(enabled, roomID: roomID)
     }
 
     @discardableResult

@@ -183,6 +183,61 @@ must not print matched secrets. The encrypted-calls MVP item stays open until th
 DM video, group voice, relay-only TURN, and log-audit smoke passes on signed
 devices.
 
+For manual call debugging on `trix.selfhost.ru`, use only disposable echo
+assistant accounts and rooms as described in
+`../../docs/tasks/2026-05-25-live-call-echo-bot.md`. The assistant must join as a
+normal XMPP/OMEMO participant and must not receive media keys through a
+server-side shortcut. The Apple `call-echo-assistant` live smoke mode uses
+`TRIX_XMPP_LIVE_SMOKE_ECHO_ID` and `TRIX_XMPP_LIVE_SMOKE_ECHO_PASSWORD` for the
+echo account plus the normal owner/peer smoke credentials; the wrapper sets the
+smoke-only send/trust gates for that run. Current output proves the disposable
+XMPP/OMEMO/MUC setup and reaches the normal relay-only LiveKit join path, but
+the live media leg is still blocked by the coturn `CreatePermission 403`
+diagnosis below. The mode reports `delayed_audio_echo=false`/
+`delayed_video_echo=false` until reviewed SDK publish paths land. Use
+`apple/scripts/run-live-call-echo-assistant-macos.sh evidence` to capture the
+scrubbed app status lines and run `call-log-audit.sh` over the evidence bundle.
+Echo-assistant evidence is diagnostic-only and does not replace the signed-device
+encrypted-calls launch gate.
+
+2026-05-26 forced-relay live diagnosis: the public call-control and LiveKit
+signaling path is not the current blocker. A scrubbed probe validated the
+app-facing call token through `/rtc/validate` and completed the raw LiveKit
+WebSocket upgrade to `/rtc`. A signed macOS `group-call-lab-media` run with
+`TRIX_CALL_LIVEKIT_DEBUG_LOGS=1` then reached LiveKit join, gathered relay ICE
+candidates, and completed TURN allocation over `trix.selfhost.ru:3478`, but
+coturn rejected `CreatePermission` for the LiveKit media peer with `403`. The
+LiveKit Swift SDK surfaces that ICE failure as `domain=io.livekit.swift-sdk
+code=100 description=Cancelled`. Treat this as a coturn/LiveKit address-policy
+deployment issue, not as an XMPP, OMEMO, token minting, or reverse-proxy routing
+failure.
+
+On the live host, inspect the uncommitted `/opt/trix-xmpp/turnserver.conf` and
+LiveKit advertise/bind settings before the next forced-relay run. For Docker/NAT
+deployments, coturn needs a deployment-local
+`external-ip=<public-ip>/<coturn-container-ip>` mapping. If coturn and LiveKit
+share the Docker host, avoid relaying to the host public IP through Docker
+hairpin NAT; configure the uncommitted `livekit.yaml` with
+`rtc.use_external_ip: false` plus `rtc.node_ip: <livekit-container-ip>`, and add
+only that private LiveKit peer to coturn with
+`allowed-peer-ip=<livekit-container-ip>`. Do not use broad private ranges or keep
+`server-relay` enabled for this path. Restart coturn/LiveKit after the change and
+rerun `TRIX_CALL_FORCE_RELAY_ONLY=1` smoke plus `call-log-audit.sh`.
+
+2026-05-26 live fix result: the live host was updated with the Docker-private
+LiveKit node path above. `call-echo-assistant` then passed with owner and echo
+joining the relay-only LiveKit room as normal E2EE participants, selected
+coturn-backed candidate pairs to the LiveKit private media peer, held the media
+window, and passed `call-log-audit.sh`. Evidence:
+`apple/build/LiveCallEchoEvidence/post-livekit-private-node-20260526T204403Z`.
+This remains diagnostic-only echo-assistant proof; the signed-device DM video,
+group voice, ten-participant, and full device log-audit launch gate remains open.
+After the same pass, the shared `certs/privkey.pem` ownership was corrected so
+both the ejabberd container user and coturn container group can read it; ejabberd
+uses `certs/*.pem`, so making the key readable only by coturn causes an XMPP
+restart loop. `turns:trix.selfhost.ru:5349` was reachable again. UDP TURN on
+`3478` is still the path proven by the echo-assistant smoke.
+
 ## Prosody Fallback
 
 Prosody is still present for a fast shell-managed spike:

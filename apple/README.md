@@ -135,7 +135,7 @@ Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `dm-e2ee`, `dm-reaction`, `dm-reply`, `dm-edit-retract`, `dm-attachment`,
 `delivery-receipt`, `typing`, `blocked-send`, `group-e2ee`,
 `group-attachment`, `group-mention`, `group-thread`, `group-leave`,
-`group-call-lab-media`, and `read-markers`.
+`group-call-lab-media`, `call-echo-assistant`, and `read-markers`.
 Provide credentials only through temporary environment variables:
 
 ```bash
@@ -305,6 +305,53 @@ The wrapper starts the loopback LiveKit/coturn/call-control lab, captures an
 evidence bundle under `apple/build/LocalCallLabEvidence/`, and runs
 `server/xmpp/scripts/call-log-audit.sh` against it. The bundle must contain only
 scrubbed smoke lines and sanitized app/call-control/LiveKit/coturn logs.
+
+Encrypted-call echo diagnostics are tracked separately in
+`docs/tasks/2026-05-25-live-call-echo-bot.md`. The intended assistant is a
+normal disposable XMPP account that joins only disposable smoke rooms on
+`trix.selfhost.ru` or the local call lab, receives media keys only through
+OMEMO-encrypted call descriptors, and prints only scrubbed status lines.
+The current `call-echo-assistant` live smoke mode creates a fresh private MUC
+with owner, peer, and echo disposable accounts, trusts the active OMEMO devices
+through the smoke-only trust gate, and drives the owner and echo account through
+the normal relay-only E2EE LiveKit group-voice join path with the echo
+remote-audio probe enabled. Use the live wrapper to build the macOS smoke app,
+run the assistant, capture scrubbed status lines, and audit the evidence bundle:
+
+```bash
+cd apple
+
+TRIX_XMPP_LIVE_SMOKE_USER_ID=test@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_PEER_ID=friend@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_ECHO_ID=tri21echo@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_ECHO_PASSWORD='...' \
+./scripts/run-live-call-echo-assistant-macos.sh evidence
+```
+
+For the current forced-relay blocker, set `TRIX_CALL_LIVEKIT_DEBUG_LOGS=1` on
+`run-live-call-echo-assistant-macos.sh` or `run-local-call-lab-macos.sh` evidence
+runs. The wrapper then captures `io.livekit.sdk` RTC debug lines in
+`apple-oslog.log` without printing LiveKit tokens, TURN credentials, media keys,
+or decrypted content.
+
+The 2026-05-26 live echo-assistant evidence passed after the live Docker media
+deployment switched coturn to `external-ip=<public-ip>/<coturn-container-ip>` and
+LiveKit to a Docker-private `rtc.node_ip` allowed by coturn. Evidence bundle:
+`apple/build/LiveCallEchoEvidence/post-livekit-private-node-20260526T204403Z`.
+That proof used UDP TURN on `3478`; after the run, coturn TLS key ownership was
+corrected for both ejabberd and coturn because the live deployment shares
+`certs/*.pem`, and `turns:trix.selfhost.ru:5349` was reachable again.
+
+Echo-assistant evidence is diagnostic-only: it can make manual media debugging
+easier, but it does not close the encrypted-calls MVP item without the real
+signed-device DM video, group voice, forced TURN relay, and log-audit proof.
+The pinned LiveKit Swift `2.9.0` path exposes video buffer publishing through
+`BufferCapturer`; delayed audio echo still needs a reviewed public API for
+publishing replayed PCM from the Apple client. Until those layers land, the
+mode reports `delayed_audio_echo=false` and `delayed_video_echo=false`; do not
+fake them by giving a server-side process decrypted media keys.
 
 From the repository root, the current Apple lanes are:
 

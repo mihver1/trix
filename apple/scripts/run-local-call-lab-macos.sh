@@ -22,6 +22,9 @@ The evidence command requires disposable XMPP smoke credentials in:
 TRIX_XMPP_LIVE_SMOKE_USER_ID, TRIX_XMPP_LIVE_SMOKE_PASSWORD,
 TRIX_XMPP_LIVE_SMOKE_PEER_ID, TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD,
 TRIX_XMPP_LIVE_SMOKE_THIRD_ID, and TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD.
+
+Set TRIX_CALL_LIVEKIT_DEBUG_LOGS=1 to include LiveKit SDK RTC debug lines in
+captured Apple logs.
 EOF
 }
 
@@ -104,8 +107,8 @@ prepare_profile_app() {
 }
 
 logs() {
-  log stream --style compact --level info \
-    --predicate 'subsystem == "com.softgrid.trixapp" AND (category == "call-media" OR category == "call-control" OR category == "xmpp")'
+  log stream --style compact --level "$(oslog_level)" \
+    --predicate "$(oslog_predicate)"
 }
 
 require_evidence_environment() {
@@ -140,11 +143,39 @@ write_evidence_metadata() {
 - relay-only: true
 - audio-probe: true
 - profile-prefix: ${TRIX_XMPP_LIVE_SMOKE_CALL_LAB_PROFILE_PREFIX:-call-lab}
+- livekit-sdk-debug-logs: $(truthy "${TRIX_CALL_LIVEKIT_DEBUG_LOGS:-0}" && printf 'true' || printf 'false')
 
 This bundle intentionally records only scrubbed smoke status lines and sanitized
 service logs. It must not contain XMPP passwords, LiveKit tokens, TURN
 credentials, OMEMO secrets, media keys, APNs tokens, or decrypted content.
 EOF
+}
+
+truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+oslog_level() {
+  if truthy "${TRIX_CALL_LIVEKIT_DEBUG_LOGS:-0}"; then
+    printf 'debug'
+  else
+    printf 'info'
+  fi
+}
+
+oslog_predicate() {
+  if truthy "${TRIX_CALL_LIVEKIT_DEBUG_LOGS:-0}"; then
+    printf '(subsystem == "com.softgrid.trixapp" OR subsystem == "io.livekit.sdk") AND process == "Trix"'
+  else
+    printf 'subsystem == "com.softgrid.trixapp" AND (category == "call-media" OR category == "call-control" OR category == "xmpp")'
+  fi
 }
 
 run_evidence_smoke() {
@@ -160,8 +191,8 @@ run_evidence_smoke() {
   write_evidence_metadata "${bundle_dir}"
 
   local oslog_pid=""
-  log stream --style compact --level info \
-    --predicate 'subsystem == "com.softgrid.trixapp" AND (category == "call-media" OR category == "call-control" OR category == "xmpp")' \
+  log stream --style compact --level "$(oslog_level)" \
+    --predicate "$(oslog_predicate)" \
     >"${bundle_dir}/apple-oslog.log" 2>&1 &
   oslog_pid="$!"
 

@@ -25,6 +25,7 @@ private struct TrixMacWorkspaceView: View {
     @ObservedObject private var callViewModel: TrixCallViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var isShowingNewRoom = false
 
     init(model: TrixAppModel) {
@@ -76,6 +77,7 @@ private struct TrixMacWorkspaceView: View {
         }
         .task(id: activeCallWindowToken) {
             guard activeCallWindowToken != nil else {
+                dismissWindow(id: TrixActiveCallWindowID)
                 return
             }
 
@@ -84,7 +86,11 @@ private struct TrixMacWorkspaceView: View {
     }
 
     private var activeCallWindowToken: String? {
-        TrixActiveCallPresentation.presentation(model: model)?.id
+        guard scenePhase != .active else {
+            return nil
+        }
+
+        return TrixActiveCallPresentation.presentation(model: model)?.id
     }
 }
 

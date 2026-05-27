@@ -244,6 +244,8 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
     private var sessionsByCallID: [String: LiveKitCallSession] = [:]
     private let forceRelayOnly: Bool
     private let audioProbeEnabled: Bool
+    private static let debugLoggingConfiguredLock = NSLock()
+    nonisolated(unsafe) private static var debugLoggingConfigured = false
 
     init(
         forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly(),
@@ -257,6 +259,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         authorization: TrixCallJoinAuthorization,
         mediaKey: TrixCallMediaKey
     ) async throws -> TrixActiveMediaCall {
+        Self.configureDebugLoggingIfNeeded()
         guard authorization.e2eeRequired else {
             throw TrixClientError.callE2EEKeyUnavailable
         }
@@ -367,6 +370,34 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
                 credential: credentials.credential
             )
         ]
+    }
+
+    private static func configureDebugLoggingIfNeeded(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        guard truthyEnvironmentValue(environment["TRIX_CALL_LIVEKIT_DEBUG_LOGS"]) else {
+            return
+        }
+
+        debugLoggingConfiguredLock.lock()
+        defer {
+            debugLoggingConfiguredLock.unlock()
+        }
+        guard !debugLoggingConfigured else {
+            return
+        }
+
+        LiveKitSDK.setLogger(OSLogger(minLevel: .debug, rtc: true))
+        debugLoggingConfigured = true
+        trixCallMediaLogger.info("LiveKit debug logging enabled")
+    }
+
+    private static func truthyEnvironmentValue(_ value: String?) -> Bool {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return false
+        }
+
+        return ["1", "true", "yes", "on"].contains(normalized)
     }
 
     private static func logMediaFailure(context: String, error: Error) {

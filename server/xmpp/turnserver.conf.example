@@ -13,6 +13,22 @@ use-auth-secret
 static-auth-secret=turn-shared-secret-change-me
 cert=/etc/coturn/certs/fullchain.pem
 pkey=/etc/coturn/certs/privkey.pem
+# The coturn container user must be able to read pkey, or the TURNS listener on
+# 5349 will not start. If this cert directory is also mounted into ejabberd and
+# ejabberd uses certfiles: *.pem, keep the key readable by both container users
+# or split the cert mounts.
 no-multicast-peers
+
+# If coturn runs behind Docker or host NAT, set a deployment-local public/private
+# mapping so the relay address advertised to clients matches the public reachable
+# address while coturn still relays from its container or host-private address.
+# Use real deployment IPs only in the uncommitted server-local turnserver.conf.
+# external-ip=<public-ip>/<private-ip>
+#
+# If the deployment denies private peer ranges and LiveKit is reached by coturn
+# through a private Docker/host address, allow only that LiveKit media peer or
+# narrow range. Do not allow broad private ranges for convenience.
+# allowed-peer-ip=<livekit-media-peer-ip-or-narrow-range>
+
 pidfile=/var/tmp/turnserver.pid
 log-file=stdout

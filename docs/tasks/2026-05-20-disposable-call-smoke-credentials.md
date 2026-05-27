@@ -13,6 +13,7 @@ tokens in this file or in issue comments.
   - DM pair (2 accounts)
   - 3-user group smoke (3 accounts)
   - 10-user group smoke (10 accounts total; includes DM+3-user accounts)
+  - optional live call echo assistant (1 additional account)
 - Keep credential handoff outside the repo.
 - Define cleanup steps and verification commands.
 
@@ -27,14 +28,14 @@ cd /opt/trix-xmpp/server/xmpp
 mkdir -p /run/secrets/trix/tri21
 chmod 700 /run/secrets/trix/tri21
 
-# Generate 10 disposable passwords with local-only file permissions.
-for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105; do
+# Generate disposable passwords with local-only file permissions.
+for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105 tri21echo; do
   LC_ALL=C tr -dc 'A-Za-z0-9-_' </dev/urandom | head -c 32 >"/run/secrets/trix/tri21/${name}.password"
   chmod 600 "/run/secrets/trix/tri21/${name}.password"
 done
 
 # Provision accounts through checked-in operator command.
-for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105; do
+for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105 tri21echo; do
   ./scripts/operator-control.sh provision-user "$name" "/run/secrets/trix/tri21/${name}.password"
 done
 ```
@@ -88,7 +89,7 @@ accounts through operator-controlled commands.
 ```bash
 cd /opt/trix-xmpp/server/xmpp
 
-for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105; do
+for name in tri21dm1 tri21dm2 tri21g31 tri21g32 tri21g33 tri21g101 tri21g102 tri21g103 tri21g104 tri21g105 tri21echo; do
   ./scripts/operator-control.sh disable-user "$name" "TRI-21 disposable cleanup"
 done
 

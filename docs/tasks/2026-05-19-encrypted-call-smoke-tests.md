@@ -38,6 +38,24 @@ for local debugging only; it does not satisfy the signed-device smoke criteria.
 The local lab smoke has verified a sanitized `group_voice` call-control response
 shape without printing LiveKit JWTs or TURN credentials.
 
+As of 2026-05-26, the live forced-relay blocker was narrowed to coturn/LiveKit
+peer address policy and fixed for the disposable echo-assistant diagnostic path.
+A token-scoped public probe validated `/rtc/validate` and the LiveKit WebSocket
+upgrade. Signed macOS evidence with `TRIX_CALL_LIVEKIT_DEBUG_LOGS=1` first
+reached LiveKit join and TURN allocation, then coturn returned
+`CreatePermission 403` for the LiveKit media peer because coturn and LiveKit were
+running in Docker on the same public host. The live host now uses
+`external-ip=<public-ip>/<coturn-container-ip>` for coturn, advertises LiveKit's
+Docker-private `rtc.node_ip`, and allows only that private LiveKit peer in
+coturn. `call-echo-assistant` evidence
+`apple/build/LiveCallEchoEvidence/post-livekit-private-node-20260526T204403Z`
+passed owner/echo relay-only LiveKit join, selected coturn-backed candidate
+pairs, held the media window, and passed log audit. Leave the MVP item open
+until signed-device DM video, group voice, ten participants, forced relay, and
+full device log audit pass. The passing evidence used UDP TURN on `3478`; after
+the run, shared TLS key ownership was corrected for both ejabberd and coturn and
+`turns:trix.selfhost.ru:5349` was reachable again.
+
 ## Goal
 
 Produce repeatable smoke evidence for encrypted calls:
@@ -57,6 +75,10 @@ Produce repeatable smoke evidence for encrypted calls:
 
 - Do not mark calls complete from unit tests, token-minting API checks, or
   simulator-only media tests.
+- Do not mark calls complete from a call echo assistant alone. Echo-assistant
+  proof may reduce manual debugging friction, but it is diagnostic-only and does
+  not replace two signed Apple devices, real PushKit/CallKit, three-account and
+  ten-participant group voice, forced TURN relay, or log audit.
 - Do not print or commit real account passwords, LiveKit JWTs, TURN usernames or
   credentials, media keys, APNs tokens, OMEMO material, or decrypted content.
 - Do not weaken OMEMO descriptor gates, LiveKit E2EE, or device-trust checks to
@@ -79,7 +101,11 @@ Produce repeatable smoke evidence for encrypted calls:
 4. Confirm each participant has visible OMEMO device/trust state and that product
    send gates are not bypassed. If trust setup is required, perform it explicitly
    and keep fingerprints/secret material out of logs.
-5. Run DM video smoke:
+5. Optionally run the disposable live echo assistant from
+   `docs/tasks/2026-05-25-live-call-echo-bot.md` to make manual media debugging
+   easier. The assistant must join as a normal XMPP/OMEMO test account in a
+   disposable room and must not receive media keys outside OMEMO.
+6. Run DM video smoke:
    - caller starts a DM video call from the signed app;
    - callee receives the incoming CallKit UI from the VoIP push path;
    - callee answers through CallKit;
@@ -87,34 +113,34 @@ Produce repeatable smoke evidence for encrypted calls:
    - interrupt one side with network toggle, app background/foreground, or
      LiveKit reconnect path;
    - require media recovery or a clean user-visible failure plus retry path.
-6. Run group voice smoke with three accounts:
+7. Run group voice smoke with three accounts:
    - create or reuse a private members-only MUC;
    - all three accounts join the voice room from signed app builds;
    - verify each participant hears the others and the active participant count is
      consistent across clients;
    - leave/end the call cleanly without stale active-call UI.
-7. Run group voice smoke with ten participants:
+8. Run group voice smoke with ten participants:
    - repeat the same private MUC voice flow with ten authenticated clients;
    - verify the LiveKit room contains ten participants, audio is usable for a
      representative speaking rotation, and clients do not show stale/missing
      participants after reconnect or leave.
-8. Run the forced TURN path:
+9. Run the forced TURN path:
    - launch the signed app with `TRIX_CALL_FORCE_RELAY_ONLY=1` so the LiveKit
      adapter uses relay-only ICE transport policy;
    - block direct candidate success or configure ICE transport policy to relay;
    - prove selected candidate pairs are relay/coturn-backed from sanitized
      client, LiveKit, or coturn diagnostics;
    - do not print TURN usernames, credentials, or LiveKit JWTs.
-9. Capture a sanitized log bundle for the smoke window:
+10. Capture a sanitized log bundle for the smoke window:
    - Apple app logs from signed devices or macOS Console;
    - `trix-call-control` logs;
    - `trix-push-gateway` logs for the VoIP call push;
    - LiveKit and coturn logs sufficient to prove joins and relay use;
    - reverse-proxy logs if they are part of the call-control path.
-10. Run `server/xmpp/scripts/call-log-audit.sh /path/to/call-smoke-logs` over
+11. Run `server/xmpp/scripts/call-log-audit.sh /path/to/call-smoke-logs` over
     the captured bundle. Its report must include only forbidden class names, file
     paths, and line counts; it must not echo matched secret values.
-11. Update `docs/mvp-checklist.md`, `docs/security.md`, `apple/README.md`, and
+12. Update `docs/mvp-checklist.md`, `docs/security.md`, `apple/README.md`, and
     `server/xmpp/README.md` with dated evidence only after every smoke above
     passes. Leave the checklist open and report the exact blocker otherwise.
 

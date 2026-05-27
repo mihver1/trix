@@ -66,6 +66,7 @@ enum XMPPLiveSmokeRunner {
         case groupThread = "group-thread"
         case groupLeave = "group-leave"
         case groupCallLabMedia = "group-call-lab-media"
+        case callEchoAssistant = "call-echo-assistant"
         case readMarkers = "read-markers"
 
         var requiresKeychainStorage: Bool {
@@ -77,7 +78,8 @@ enum XMPPLiveSmokeRunner {
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
                  .groupTimelineRestart, .dmE2EE, .dmReaction, .dmReply, .dmEditRetract,
                  .dmAttachment, .deliveryReceipt, .typing, .groupE2EE, .groupAttachment,
-                 .groupMention, .groupThread, .groupLeave, .groupCallLabMedia, .readMarkers:
+                 .groupMention, .groupThread, .groupLeave, .groupCallLabMedia,
+                 .callEchoAssistant, .readMarkers:
                 return false
             }
         }
@@ -92,7 +94,7 @@ enum XMPPLiveSmokeRunner {
                  .groupTimelineRestart, .timelineRelaunchSeed, .dmE2EE, .dmReaction, .dmReply,
                  .dmEditRetract, .dmAttachment, .deliveryReceipt, .typing, .groupE2EE,
                  .groupAttachment, .groupMention, .groupThread, .groupLeave,
-                 .groupCallLabMedia, .readMarkers:
+                 .groupCallLabMedia, .callEchoAssistant, .readMarkers:
                 return true
             }
         }
@@ -116,6 +118,8 @@ enum XMPPLiveSmokeRunner {
         let peerPassword: String?
         let thirdID: String?
         let thirdPassword: String?
+        let echoID: String?
+        let echoPassword: String?
         let searchTerm: String?
         let profileDisplayName: String?
         let profileBio: String?
@@ -133,6 +137,7 @@ enum XMPPLiveSmokeRunner {
         let ownDeviceRevocationTarget: String?
         let callLabProfilePrefix: String
         let callLabHoldSeconds: TimeInterval
+        let echoDelaySeconds: TimeInterval
         let usesKeychainStorage: Bool
 
         var omemoPersistence: TrixOMEMOPersistence {
@@ -149,7 +154,7 @@ enum XMPPLiveSmokeRunner {
                  .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE, .dmAttachment,
                  .dmReaction, .dmReply, .dmEditRetract, .deliveryReceipt, .groupE2EE,
                  .groupAttachment, .groupMention, .groupThread, .groupLeave,
-                 .groupCallLabMedia, .readMarkers:
+                 .groupCallLabMedia, .callEchoAssistant, .readMarkers:
                 return .keychain
             }
         }
@@ -193,6 +198,8 @@ enum XMPPLiveSmokeRunner {
                 peerPassword: environment["TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD"],
                 thirdID: environment["TRIX_XMPP_LIVE_SMOKE_THIRD_ID"],
                 thirdPassword: environment["TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD"],
+                echoID: environment["TRIX_XMPP_LIVE_SMOKE_ECHO_ID"],
+                echoPassword: environment["TRIX_XMPP_LIVE_SMOKE_ECHO_PASSWORD"],
                 searchTerm: environment["TRIX_XMPP_LIVE_SMOKE_SEARCH_TERM"],
                 profileDisplayName: environment["TRIX_XMPP_LIVE_SMOKE_PROFILE_DISPLAY_NAME"],
                 profileBio: environment["TRIX_XMPP_LIVE_SMOKE_PROFILE_BIO"],
@@ -214,6 +221,10 @@ enum XMPPLiveSmokeRunner {
                 callLabHoldSeconds: Self.positiveTimeInterval(
                     environment["TRIX_XMPP_LIVE_SMOKE_CALL_LAB_HOLD_SECONDS"],
                     fallback: 10
+                ),
+                echoDelaySeconds: Self.positiveTimeInterval(
+                    environment["TRIX_XMPP_LIVE_SMOKE_ECHO_DELAY_SECONDS"],
+                    fallback: 2
                 ),
                 usesKeychainStorage: environment["TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN"] == "1"
             )
@@ -516,6 +527,13 @@ enum XMPPLiveSmokeRunner {
 
             case .groupCallLabMedia:
                 try await runGroupCallLabMediaSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .callEchoAssistant:
+                try await runCallEchoAssistantSmoke(
                     configuration: configuration,
                     service: service,
                     session: session
@@ -2532,6 +2550,194 @@ enum XMPPLiveSmokeRunner {
         }
     }
 
+    @MainActor
+    private static func runCallEchoAssistantSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let statusPrefix = "call-echo-assistant"
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let echoID = try requiredPeerID(configuration.echoID)
+        let echoPassword = try requiredPassword(configuration.echoPassword)
+        guard Set([session.userID, peerID, echoID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = smokeService(
+            configuration: configuration,
+            profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "peer")
+        )
+        let echoService = smokeService(
+            configuration: configuration,
+            profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "echo")
+        )
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("\(statusPrefix) login ok role=peer resource=\(peerSession.deviceID)")
+
+        var echoSession: TrixSession?
+        var ownerViewModel: TrixCallViewModel?
+        var echoViewModel: TrixCallViewModel?
+        var roomID: String?
+        do {
+            let loggedInEchoSession = try await echoService.login(
+                userID: echoID,
+                password: echoPassword,
+                serverURL: configuration.serverURL
+            )
+            echoSession = loggedInEchoSession
+            status("\(statusPrefix) login ok role=echo resource=\(loggedInEchoSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Call Echo \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, echoID],
+                session: session
+            )
+            roomID = room.id
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("\(statusPrefix) create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: statusPrefix,
+                service: peerService,
+                session: peerSession
+            )
+            let echoRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "echo",
+                statusPrefix: statusPrefix,
+                service: echoService,
+                session: loggedInEchoSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  echoRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let expectedUserIDs = [session.userID, peerID, echoID]
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedUserIDs,
+                statusPrefix: statusPrefix,
+                service: service,
+                session: session
+            )
+            status("\(statusPrefix) members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)")
+            let peerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedUserIDs,
+                statusPrefix: statusPrefix,
+                service: peerService,
+                session: peerSession
+            )
+            status("\(statusPrefix) members ok role=peer count=\(peerMembers.count) joined=\(peerMembers.filter { $0.membership == .joined }.count)")
+            let echoMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedUserIDs,
+                statusPrefix: statusPrefix,
+                service: echoService,
+                session: loggedInEchoSession
+            )
+            status("\(statusPrefix) members ok role=echo count=\(echoMembers.count) joined=\(echoMembers.filter { $0.membership == .joined }.count)")
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: echoID,
+                thirdService: echoService,
+                thirdSession: loggedInEchoSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: statusPrefix
+            )
+
+            let ownerCalls = TrixCallViewModel(
+                callControlService: HTTPCallControlService(),
+                callDescriptorService: service,
+                mediaCallService: TrixLiveKitMediaCallService(forceRelayOnly: true, audioProbeEnabled: false)
+            )
+            let echoCalls = TrixCallViewModel(
+                callControlService: HTTPCallControlService(),
+                callDescriptorService: echoService,
+                mediaCallService: TrixLiveKitMediaCallService(forceRelayOnly: true, audioProbeEnabled: true)
+            )
+            ownerViewModel = ownerCalls
+            echoViewModel = echoCalls
+
+            let holdSeconds = min(max(configuration.callLabHoldSeconds, 1), 60)
+            let echoDelaySeconds = min(max(configuration.echoDelaySeconds, 1), 30)
+            status("\(statusPrefix) media config relay_only=true owner_audio_probe=false echo_audio_probe=true hold_seconds=\(Int(holdSeconds)) configured_delay_seconds=\(Int(echoDelaySeconds))")
+
+            await ownerCalls.joinGroupVoiceRoom(roomID: room.id, session: session)
+            try requireActiveGroupCall(ownerCalls, roomID: room.id, role: "owner", statusPrefix: statusPrefix)
+            status("\(statusPrefix) media join ok role=owner active_call=true publish_local_audio=true")
+
+            _ = try await waitForGroupVoiceState(
+                roomID: room.id,
+                expectedParticipantID: session.userID,
+                statusPrefix: statusPrefix,
+                service: echoService,
+                session: loggedInEchoSession
+            )
+
+            await echoCalls.joinGroupVoiceRoom(roomID: room.id, session: loggedInEchoSession)
+            try requireActiveGroupCall(echoCalls, roomID: room.id, role: "echo", statusPrefix: statusPrefix)
+            status("\(statusPrefix) media join ok role=echo active_call=true normal_participant=true")
+
+            _ = try await waitForGroupVoiceState(
+                roomID: room.id,
+                expectedParticipantID: echoID,
+                statusPrefix: statusPrefix,
+                service: service,
+                session: session
+            )
+
+            try await Task.sleep(nanoseconds: UInt64(holdSeconds * 1_000_000_000))
+            status("\(statusPrefix) media hold ok participants=2 relay_only=true delayed_audio_echo=false delayed_video_echo=false sdk_blocker=custom_audio_publish_unvalidated")
+
+            _ = await echoCalls.endCall(roomID: room.id, session: loggedInEchoSession)
+            _ = await ownerCalls.endCall(roomID: room.id, session: session)
+            status("\(statusPrefix) ok e2ee_participant=true diagnostic_only=true")
+
+            try? await echoService.logout(session: loggedInEchoSession)
+            try? await peerService.logout(session: peerSession)
+        } catch {
+            if let roomID {
+                if let echoViewModel,
+                   let echoSession {
+                    _ = await echoViewModel.endCall(roomID: roomID, session: echoSession)
+                }
+                if let ownerViewModel {
+                    _ = await ownerViewModel.endCall(roomID: roomID, session: session)
+                }
+            }
+            if let echoSession {
+                try? await echoService.logout(session: echoSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
     private static func runSessionRestoreSmoke(
         configuration: Configuration,
         service: XMPPMartinService,
@@ -3148,7 +3354,7 @@ enum XMPPLiveSmokeRunner {
     }
 
     private static func primarySmokeService(configuration: Configuration) -> XMPPMartinService {
-        if configuration.mode == .groupCallLabMedia {
+        if configuration.mode == .groupCallLabMedia || configuration.mode == .callEchoAssistant {
             return smokeService(
                 configuration: configuration,
                 profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "owner")
@@ -3177,10 +3383,11 @@ enum XMPPLiveSmokeRunner {
     private static func requireActiveGroupCall(
         _ viewModel: TrixCallViewModel,
         roomID: String,
-        role: String
+        role: String,
+        statusPrefix: String = "group-call-lab-media"
     ) throws {
         guard viewModel.currentCall(roomID: roomID, kind: .groupVoice) != nil else {
-            status("group-call-lab-media failed active_call=false role=\(role)")
+            status("\(statusPrefix) failed active_call=false role=\(role)")
             throw TrixClientError.callMediaUnavailable
         }
     }
@@ -3188,6 +3395,7 @@ enum XMPPLiveSmokeRunner {
     private static func waitForGroupVoiceState(
         roomID: String,
         expectedParticipantID: String,
+        statusPrefix: String = "group-call-lab-media",
         service: XMPPMartinService,
         session: TrixSession
     ) async throws -> TrixVoiceRoomState {
@@ -3208,7 +3416,7 @@ enum XMPPLiveSmokeRunner {
                     lhs.updatedAtUnix < rhs.updatedAtUnix
                 }
             if let state {
-                status("group-call-lab-media descriptor ok voice_state=true")
+                status("\(statusPrefix) descriptor ok voice_state=true")
                 return state
             }
 
@@ -3217,7 +3425,7 @@ enum XMPPLiveSmokeRunner {
             }
         }
 
-        status("group-call-lab-media failed voice_state=false")
+        status("\(statusPrefix) failed voice_state=false")
         throw TrixClientError.callDescriptorUnavailable
     }
 

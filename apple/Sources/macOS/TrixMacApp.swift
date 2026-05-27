@@ -32,8 +32,9 @@ struct TrixMacApp: App {
                 TrixMacActiveCallWindow(model: model)
             }
         }
-        .defaultSize(width: 380, height: 168)
+        .defaultSize(width: 430, height: 76)
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             if XMPPLiveSmokeRunner.isRequested {
