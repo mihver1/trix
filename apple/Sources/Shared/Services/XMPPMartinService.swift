@@ -668,6 +668,7 @@ actor XMPPMartinService: TrixService {
     }
 
     private var connections: [String: Connection] = [:]
+    private let connectionOpenGate = TrixAsyncOperationGate<String, Connection>()
     private var timelineHistory: [String: [String: [TrixTimelineItem]]] = [:]
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
     private var typingRecords: [String: [String: [String: TypingRecord]]] = [:]
@@ -835,7 +836,9 @@ actor XMPPMartinService: TrixService {
     }
 
     func logout(session: TrixSession) async throws {
-        guard let connection = connections.removeValue(forKey: Self.sessionKey(session)) else {
+        let key = Self.sessionKey(session)
+        await connectionOpenGate.cancelValue(for: key)
+        guard let connection = connections.removeValue(forKey: key) else {
             return
         }
 
@@ -2297,7 +2300,7 @@ actor XMPPMartinService: TrixService {
             try? await connection.client.disconnect(force: true)
         }
 
-        return try await openConnection(for: session)
+        return try await openConnectionCoalesced(for: session)
     }
 
     private func activeConnection(for session: TrixSession) -> Connection? {
@@ -2330,7 +2333,14 @@ actor XMPPMartinService: TrixService {
         if let existing = connections.removeValue(forKey: key) {
             try? await existing.client.disconnect(force: true)
         }
-        return try await openConnection(for: session)
+        return try await openConnectionCoalesced(for: session)
+    }
+
+    private func openConnectionCoalesced(for session: TrixSession) async throws -> Connection {
+        let key = Self.sessionKey(session)
+        return try await connectionOpenGate.value(for: key) {
+            try await self.openConnection(for: session)
+        }
     }
 
     private func waitForOMEMOReady(connection: Connection) async {

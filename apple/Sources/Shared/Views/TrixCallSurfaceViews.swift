@@ -236,8 +236,11 @@ private struct TrixActiveCallBar: View {
                         )
                     }
                 } label: {
-                    Image(systemName: presentation.state.localAudioState == .muted ? "mic.slash.fill" : "mic.fill")
-                        .frame(width: 30, height: 30)
+                    TrixMicrophoneButtonContent(
+                        audioState: presentation.state.localAudioState,
+                        callID: presentation.state.callID,
+                        tint: tint
+                    )
                 }
                 .buttonStyle(.bordered)
                 .disabled(isWorking || presentation.state.localAudioState == .unavailable)
@@ -377,6 +380,61 @@ private struct TrixActiveCallBar: View {
         }
 
         return "\(minutes):\(String(format: "%02d", remainingSeconds))"
+    }
+}
+
+struct TrixMicrophoneButtonContent: View {
+    let audioState: TrixCallLocalAudioState
+    let callID: String?
+    let tint: Color
+    @ObservedObject private var audioLevelRegistry = TrixCallAudioLevelRegistry.shared
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Image(systemName: audioState == .muted ? "mic.slash.fill" : "mic.fill")
+                .frame(width: 30, height: 30)
+
+            if audioState == .unmuted {
+                TrixMicrophoneLevelMeter(level: audioLevel, tint: tint)
+                    .frame(width: 18, height: 8)
+                    .padding(.bottom, 3)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(width: 30, height: 30)
+    }
+
+    private var audioLevel: Double {
+        audioLevelRegistry.level(for: callID)
+    }
+}
+
+private struct TrixMicrophoneLevelMeter: View {
+    let level: Double
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<4, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(opacity(for: index)))
+                    .frame(width: 2.5, height: height(for: index))
+            }
+        }
+        .animation(.easeOut(duration: 0.08), value: level)
+    }
+
+    private func height(for index: Int) -> CGFloat {
+        let thresholds = [0.04, 0.18, 0.36, 0.58]
+        let threshold = thresholds[index]
+        let normalized = min(max((level - threshold) / 0.36, 0), 1)
+        return 2 + CGFloat(normalized) * 6
+    }
+
+    private func opacity(for index: Int) -> Double {
+        let thresholds = [0.04, 0.18, 0.36, 0.58]
+        return level >= thresholds[index] ? 0.95 : 0.28
     }
 }
 

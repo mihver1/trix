@@ -2144,8 +2144,11 @@ private struct TrixDirectCallBar: View {
             Button {
                 setMicrophoneMuted(state.localAudioState != .muted)
             } label: {
-                Image(systemName: state.localAudioState == .muted ? "mic.slash.fill" : "mic.fill")
-                    .frame(width: 30, height: 30)
+                TrixMicrophoneButtonContent(
+                    audioState: state.localAudioState,
+                    callID: state.callID,
+                    tint: .green
+                )
             }
             .buttonStyle(.bordered)
             .disabled(isWorking || state.localAudioState == .unavailable)

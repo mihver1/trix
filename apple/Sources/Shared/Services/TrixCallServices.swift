@@ -411,10 +411,12 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         guard let session = sessionsByCallID.removeValue(forKey: callID) else {
             return
         }
+        session.observer.detachLocalAudioLevelProbe()
         session.room.remove(delegate: session.observer)
         await session.room.disconnect()
         await MainActor.run {
             TrixLiveKitVideoTrackRegistry.shared.clear(callID: callID)
+            TrixCallAudioLevelRegistry.shared.clear(callID: callID)
         }
     }
 
@@ -425,6 +427,11 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
 
         do {
             try await session.room.localParticipant.setMicrophone(enabled: enabled)
+            if enabled {
+                session.observer.attachExistingLocalAudioTrack(in: session.room)
+            } else {
+                session.observer.detachLocalAudioLevelProbe()
+            }
         } catch {
             Self.logMediaFailure(context: "microphone-toggle", error: error)
             throw TrixClientError.callMicrophoneUnavailable
@@ -461,6 +468,8 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
     private let callID: String
     private let audioProbeEnabled: Bool
     private var audioProbes: [String: TrixLiveKitAudioProbe] = [:]
+    private var localAudioTrack: LocalAudioTrack?
+    private var localAudioLevelProbe: TrixLiveKitLocalAudioLevelProbe?
 
     init(callID: String, audioProbeEnabled: Bool = false) {
         self.callID = callID
@@ -469,6 +478,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
 
     func attachExistingTracks(in room: Room) {
         attachExistingLocalVideoTrack(in: room)
+        attachExistingLocalAudioTrack(in: room)
         attachExistingRemoteTracks(in: room)
     }
 
@@ -478,6 +488,23 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
             .compactMap { $0.track as? VideoTrack }
             .first
         setLocalVideoTrack(track)
+    }
+
+    func attachExistingLocalAudioTrack(in room: Room) {
+        let track = room.localParticipant.trackPublications.values
+            .compactMap { $0 as? LocalTrackPublication }
+            .compactMap { $0.track as? LocalAudioTrack }
+            .first
+        setLocalAudioTrack(track)
+    }
+
+    func detachLocalAudioLevelProbe() {
+        if let localAudioLevelProbe {
+            localAudioTrack?.remove(audioRenderer: localAudioLevelProbe)
+        }
+        localAudioTrack = nil
+        localAudioLevelProbe = nil
+        setLocalAudioLevel(0)
     }
 
     private func attachExistingRemoteTracks(in room: Room) {
@@ -509,11 +536,21 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
     }
 
     func room(_ room: Room, participant: LocalParticipant, didPublishTrack publication: LocalTrackPublication) {
-        guard let track = publication.track as? VideoTrack else {
-            return
+        if let track = publication.track as? VideoTrack {
+            setLocalVideoTrack(track)
         }
+        if let track = publication.track as? LocalAudioTrack {
+            setLocalAudioTrack(track)
+        }
+    }
 
-        setLocalVideoTrack(track)
+    func room(_ room: Room, participant: LocalParticipant, didUnpublishTrack publication: LocalTrackPublication) {
+        if publication.track is VideoTrack {
+            setLocalVideoTrack(nil)
+        }
+        if publication.track is LocalAudioTrack {
+            detachLocalAudioLevelProbe()
+        }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
@@ -601,6 +638,36 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         }
     }
 
+    private func setLocalAudioTrack(_ track: LocalAudioTrack?) {
+        if localAudioTrack == nil, track == nil {
+            return
+        }
+        if let localAudioTrack, let track, localAudioTrack === track {
+            return
+        }
+
+        if let localAudioLevelProbe {
+            localAudioTrack?.remove(audioRenderer: localAudioLevelProbe)
+        }
+
+        localAudioTrack = track
+        guard let track else {
+            localAudioLevelProbe = nil
+            setLocalAudioLevel(0)
+            return
+        }
+
+        let probe = TrixLiveKitLocalAudioLevelProbe(callID: callID)
+        localAudioLevelProbe = probe
+        track.add(audioRenderer: probe)
+    }
+
+    private func setLocalAudioLevel(_ level: Double) {
+        Task { @MainActor [callID] in
+            TrixCallAudioLevelRegistry.shared.setLevel(level, callID: callID)
+        }
+    }
+
     private func attachAudioProbeIfNeeded(to audioTrack: RemoteAudioTrack, publication: RemoteTrackPublication) {
         guard audioProbeEnabled else {
             return
@@ -641,6 +708,92 @@ private final class TrixLiveKitAudioProbe: NSObject, AudioRenderer, @unchecked S
         if shouldLog {
             trixCallMediaLogger.info("LiveKit remote audio frames received")
         }
+    }
+}
+
+private final class TrixLiveKitLocalAudioLevelProbe: NSObject, AudioRenderer, @unchecked Sendable {
+    private let callID: String
+    private let lock = NSLock()
+    private var lastUpdateTime: TimeInterval = 0
+    private var smoothedLevel: Double = 0
+
+    init(callID: String) {
+        self.callID = callID
+    }
+
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+        let rawLevel = Self.normalizedLevel(from: pcmBuffer)
+        let now = Date().timeIntervalSinceReferenceDate
+        var levelToEmit: Double?
+
+        lock.lock()
+        if rawLevel >= smoothedLevel {
+            smoothedLevel = smoothedLevel * 0.35 + rawLevel * 0.65
+        } else {
+            smoothedLevel = smoothedLevel * 0.82 + rawLevel * 0.18
+        }
+
+        if now - lastUpdateTime >= 1.0 / 15.0 {
+            lastUpdateTime = now
+            levelToEmit = smoothedLevel < 0.02 ? 0 : smoothedLevel
+        }
+        lock.unlock()
+
+        guard let levelToEmit else {
+            return
+        }
+
+        Task { @MainActor [callID] in
+            TrixCallAudioLevelRegistry.shared.setLevel(levelToEmit, callID: callID)
+        }
+    }
+
+    private static func normalizedLevel(from pcmBuffer: AVAudioPCMBuffer) -> Double {
+        let frameCount = Int(pcmBuffer.frameLength)
+        let channelCount = Int(pcmBuffer.format.channelCount)
+        guard frameCount > 0, channelCount > 0 else {
+            return 0
+        }
+
+        if let floatChannelData = pcmBuffer.floatChannelData {
+            var squareSum: Double = 0
+            var sampleCount = 0
+            for channelIndex in 0..<channelCount {
+                let samples = floatChannelData[channelIndex]
+                for frameIndex in 0..<frameCount {
+                    let sample = Double(samples[frameIndex])
+                    squareSum += sample * sample
+                }
+                sampleCount += frameCount
+            }
+            return normalizedLevel(squareSum: squareSum, sampleCount: sampleCount)
+        }
+
+        if let int16ChannelData = pcmBuffer.int16ChannelData {
+            var squareSum: Double = 0
+            var sampleCount = 0
+            for channelIndex in 0..<channelCount {
+                let samples = int16ChannelData[channelIndex]
+                for frameIndex in 0..<frameCount {
+                    let sample = Double(samples[frameIndex]) / Double(Int16.max)
+                    squareSum += sample * sample
+                }
+                sampleCount += frameCount
+            }
+            return normalizedLevel(squareSum: squareSum, sampleCount: sampleCount)
+        }
+
+        return 0
+    }
+
+    private static func normalizedLevel(squareSum: Double, sampleCount: Int) -> Double {
+        guard squareSum > 0, sampleCount > 0 else {
+            return 0
+        }
+
+        let rms = sqrt(squareSum / Double(sampleCount))
+        let decibels = 20 * log10(max(rms, 0.000_001))
+        return min(max((decibels + 55) / 40, 0), 1)
     }
 }
 #else
