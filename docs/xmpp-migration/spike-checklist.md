@@ -8,13 +8,13 @@ must end with a written result: accepted path, rejected path, or blocker.
 Question: which Apple-compatible XMPP library can support the required MVP
 without custom crypto?
 
-- [ ] Identify candidate Swift or Objective-C XMPP libraries.
+- [x] Identify candidate Swift or Objective-C XMPP libraries.
 - [x] Confirm iOS support.
 - [x] Confirm macOS support.
 - [x] Confirm Swift Package Manager or acceptable build integration.
-- [ ] Confirm TLS and modern authentication support.
-- [ ] Confirm stream management support.
-- [ ] Confirm message archive support.
+- [x] Confirm TLS and modern authentication support.
+- [x] Confirm stream management support.
+- [x] Confirm message archive support.
 - [x] Confirm file upload support or a compatible extension path.
 - [ ] Confirm active maintenance status.
 - [x] Confirm license compatibility.
@@ -28,17 +28,29 @@ Exit criteria:
   blocked.
 - Unsupported protocol features are listed as product or implementation risks.
 
+Current result:
+
+- Tigase Martin `3.2.4` plus MartinOMEMO `2.2.3`, Tigase libsignal `1.0.0`,
+  and tigase-logging.swift `1.0.0` are selected for the private
+  non-commercial MVP/TestFlight path.
+- The selected stack builds in the iOS and macOS targets and supports the
+  current login, restore, MAM, MUC, HTTP upload, XEP-0357 registration, and
+  OMEMO send/decrypt paths.
+- GPL/AGPL obligations are accepted for that private scope and tracked in
+  `license-sbom.md`. Active maintenance and broader ecosystem interop remain
+  tracked risks, not current private-MVP blockers.
+
 ## Apple OMEMO Gate
 
 Question: can the selected Apple stack provide OMEMO for DMs and groups through
 reviewed library APIs?
 
-- [ ] Confirm OMEMO implementation availability.
+- [x] Confirm OMEMO implementation availability.
 - [x] Confirm one-to-one encrypted send and receive.
 - [x] Confirm private group encrypted send and receive.
-- [ ] Confirm device bundle publication and retrieval.
-- [ ] Confirm multi-device behavior for one user.
-- [ ] Confirm trust or verification model exposed by the library.
+- [x] Confirm device bundle publication and retrieval.
+- [ ] Confirm multi-device behavior for one user on real signed devices.
+- [x] Confirm trust or verification model exposed by the library.
 - [x] Confirm local crypto store persistence and reset behavior for local
       registration id, identity key pair, prekeys, signed prekeys, sessions,
       identities, and sender keys.
@@ -71,21 +83,25 @@ Current result:
   the checklist records live two-account send/receive validation.
 - Group OMEMO text send/receive passed the three-account `group-e2ee` macOS live
   smoke on 2026-05-09.
+- The scrubbed `second-device-fingerprint` mode proves distinct isolated
+  local-profile OMEMO device IDs, fingerprint presence, and no silent trust.
+  Signed two-device validation remains open in `docs/mvp-checklist.md`.
 
 ## XMPP Server Gate
 
 Question: which private XMPP server should Trix run?
 
-- [ ] Evaluate candidate servers for private deployment.
-- [ ] Confirm federation can be disabled.
+- [x] Evaluate candidate servers for private deployment.
+- [x] Confirm federation can be disabled.
 - [x] Confirm account provisioning can be operator-controlled.
-- [ ] Confirm OMEMO publish/subscribe requirements.
-- [ ] Confirm private group support.
-- [ ] Confirm archive support.
-- [ ] Confirm upload support.
+- [x] Confirm OMEMO publish/subscribe requirements.
+- [x] Confirm private group support.
+- [x] Confirm archive support.
+- [x] Confirm upload support.
 - [x] Confirm backup and restore path.
-- [ ] Confirm observability and log redaction controls.
-- [ ] Confirm resource usage fits the tiny self-hosted target.
+- [x] Confirm observability and log redaction controls for the current private
+      MVP paths.
+- [x] Confirm resource usage fits the tiny self-hosted target.
 
 Exit criteria:
 
@@ -94,6 +110,15 @@ Exit criteria:
 - Backup creation and restore are scripted. The local
   `server/xmpp/scripts/restore-verify.sh` native-Mnesia restore drill passed on
   2026-05-09.
+
+Current result:
+
+- ejabberd is the product server path; Prosody remains a fallback/spike profile.
+- Production `trix.selfhost.ru` is deployed with client-to-server reachable and
+  server-to-server federation closed. The checked-in local config also has no
+  `5269` listener.
+- SQL-backed MAM, private MUCs, HTTP upload, `mod_push`, the loopback admin API,
+  restore verification, and private push/call/admin wrappers are in place.
 
 ## Control-Plane Gate
 
@@ -140,7 +165,7 @@ Exit criteria:
 
 Question: how do notifications work without leaking plaintext?
 
-- [ ] Confirm server-side push extension support.
+- [x] Confirm server-side push extension support.
 - [x] Confirm APNs integration path for iOS registration plumbing.
 - [x] Confirm macOS notification registration plumbing.
 - [x] Confirm the Apple app handles remote pushes as generic sync notifications
@@ -149,11 +174,12 @@ Question: how do notifications work without leaking plaintext?
       local silent-sync fallback notifications without decrypted text, filenames,
       or attachment names.
 - [x] Confirm a Trix APNs gateway/push component exists behind XEP-0357.
-- [ ] Confirm signed-device APNs delivery reaches iOS and macOS.
-- [ ] Confirm push payloads do not include decrypted message bodies in live APNs
+- [x] Confirm signed-device APNs delivery reaches a signed Apple target, with
+      iOS and macOS plumbing in place.
+- [x] Confirm push payloads do not include decrypted message bodies in live APNs
       delivery or gateway logs.
-- [ ] Confirm badge/unread state source.
-- [ ] Confirm behavior while app is logged out or local keys are unavailable.
+- [x] Confirm badge/unread state source.
+- [x] Confirm behavior while app is logged out or local keys are unavailable.
 
 Exit criteria:
 
@@ -171,19 +197,25 @@ Current result:
   necessary but does not send APNs directly.
 - On 2026-05-10 the component was deployed on the VPS with deployment-local APNs
   credentials and connected to ejabberd as `push.trix.selfhost.ru`.
-- MVP blocker: signed-device APNs delivery smoke still has not passed.
+- On 2026-05-20 signed macOS APNs smoke passed with APNs provider acceptance and
+  visible generic text only. On 2026-06-01 the live deployment was adjusted so
+  XMPP component publishes generate silent sync wakes while visible text remains
+  local and generic after sync.
+- iOS physical-device APNs proof is not separately dated in this checklist; keep
+  it as a platform follow-up if the release gate requires per-platform evidence.
 
 ## Attachment Gate
 
 Question: how are encrypted conversations linked to uploaded files?
 
-- [ ] Confirm upload service.
-- [ ] Confirm authentication and authorization model.
-- [ ] Confirm size limits.
-- [ ] Confirm retention and deletion behavior.
-- [ ] Confirm how attachment references are sent inside encrypted messages.
-- [ ] Confirm local preview/open/share behavior on iOS.
-- [ ] Confirm local preview/open/share behavior on macOS.
+- [x] Confirm upload service.
+- [x] Confirm authentication and authorization model.
+- [x] Confirm size limits.
+- [ ] Confirm server retention and deletion behavior beyond current backup/media
+      cache controls.
+- [x] Confirm how attachment references are sent inside encrypted messages.
+- [x] Confirm local preview/open/share behavior on iOS.
+- [x] Confirm local preview/open/share behavior on macOS.
 
 Exit criteria:
 
@@ -194,12 +226,12 @@ Exit criteria:
 
 Question: how will the two Apple clients ship?
 
-- [ ] Define XMPP iOS target name.
-- [ ] Define XMPP macOS target name.
-- [ ] Confirm bundle identifiers and entitlements.
-- [ ] Confirm Keychain access groups.
-- [ ] Confirm APNs entitlements if notifications are in scope.
-- [ ] Confirm TestFlight/archive commands.
+- [x] Define XMPP iOS target name.
+- [x] Define XMPP macOS target name.
+- [x] Confirm bundle identifiers and entitlements.
+- [x] Confirm Keychain access groups.
+- [x] Confirm APNs entitlements if notifications are in scope.
+- [x] Confirm TestFlight/archive commands.
 - [ ] Confirm upgrade behavior from earlier Matrix or prototype builds.
 
 Exit criteria:

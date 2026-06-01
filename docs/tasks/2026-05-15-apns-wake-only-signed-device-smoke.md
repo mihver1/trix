@@ -1,8 +1,13 @@
 # Task: APNs Generic Signed-Device Smoke
 
-You are the next coding agent working in the Trix repo. Close the APNs MVP item
-only if a signed iOS or macOS device proves generic APNs delivery without plaintext
-payload fields.
+This task is closed for the current MVP. On 2026-05-20 signed macOS APNs smoke
+proved generic APNs delivery without plaintext payload fields. Later live VPS
+work enabled XMPP component publishes to produce silent sync wakes while keeping
+visible notification text local and generic after sync.
+
+Keep this file as the historical smoke plan. Reopen it only if the push
+contract changes, or if the release gate requires separate physical iOS APNs
+evidence.
 
 ## Current Context
 
@@ -20,16 +25,16 @@ Relevant files:
 - `apple/Sources/Shared/Services/XMPPMartinService.swift`
 - `apple/project.yml`
 
-The app currently accepts only `aps.content-available=1` plus
-`trix.type=sync`, rejects plaintext/body/decrypted/filename style keys, and
-allows only generic visible alert text. The gateway sends
-`TrixApnsNotificationPayload` and the XEP-0114 component returns
-`max-payload-size=0`.
+The app accepts only `aps.content-available=1` plus `trix.type=sync`, rejects
+plaintext/body/decrypted/filename style keys, and allows only generic visible
+alert text. The gateway sends `TrixApnsNotificationPayload`; XEP-0114 component
+publishes are delivered as silent APNs background wakes, not server-generated
+plaintext alerts.
 
 ## Goal
 
-Produce signed-device evidence that APNs delivery works and that the delivered
-payload contains no plaintext fields.
+Preserve signed-device evidence that APNs delivery works and that delivered
+payloads contain no plaintext fields.
 
 ## Non-Goals
 
@@ -64,13 +69,14 @@ payload contains no plaintext fields.
 7. If code changes were needed, add focused tests around the changed code. Keep
    `TrixApnsNotificationPayload` and `TrixRemoteNotificationPayload` fail-closed for
    forbidden fields.
-8. Update `docs/mvp-checklist.md`, `docs/security.md`, and `server/xmpp/README.md`
-   with exact dated evidence only after the signed-device proof passes.
+8. For future push changes, update `docs/mvp-checklist.md`, `docs/security.md`,
+   and `server/xmpp/README.md` with exact dated evidence only after fresh
+   signed-device proof passes.
 
 ## Acceptance Criteria
 
-- A signed iOS or macOS device receives a visible APNs notification for the XMPP
-  Trix app.
+- A signed Apple device receives a visible APNs notification for the XMPP Trix
+  app.
 - The payload proof shows `aps.content-available=1` and `trix.type=sync`.
 - The payload proof shows only generic `aps.alert`/`aps.sound` and no message
   body plaintext, decrypted content, filename, attachment name, media key,
@@ -78,7 +84,7 @@ payload contains no plaintext fields.
 - App handling remains generic; no decrypted text or attachment
   metadata appears in push or local notification output.
 - Gateway and app logs remain secret-safe.
-- `docs/mvp-checklist.md` is updated only if the live proof passes.
+- `docs/mvp-checklist.md` is updated only if fresh live proof passes.
 
 ## Verification Commands
 
@@ -94,6 +100,6 @@ bash -n server/xmpp/scripts/*.sh apple/scripts/archive-testflight.sh
 git diff --check
 ```
 
-Also report the signed-device command chain and scrubbed APNs evidence. If a
-real signed device or APNs credential path is unavailable, report that as the
-blocker and leave the checklist open.
+For future push changes, report the signed-device command chain and scrubbed
+APNs evidence. If a fresh signed-device or APNs credential path is unavailable,
+report that as the blocker for the new change rather than editing the checklist.

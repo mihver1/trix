@@ -1,7 +1,12 @@
 # Task: Persistent DM And Group Sync Tests
 
-You are the next coding agent working in the Trix repo. Turn the existing live
-DM/group sync coverage into a repeatable persistent test gate.
+This task is closed for the current MVP. On 2026-05-20 the signed macOS
+persistent gate passed with scrubbed output: DM restart overlap was nonzero,
+encrypted group MUC restart overlap was nonzero, and no credentials or decrypted
+message bodies were printed.
+
+Keep this file as the historical implementation plan for the persistent sync
+gate. Reopen it only if the gate regresses or the coverage target changes.
 
 ## Current Context
 
@@ -16,15 +21,15 @@ Relevant files:
 - `apple/Sources/Shared/Services/TrixOMEMOStore.swift`
 - `apple/Tests/Shared/`
 
-Existing live modes include `timeline-restart`, `dm-e2ee`, `group-e2ee`,
-`dm-attachment`, and `group-attachment`. `timeline-restart` currently covers DM
-MAM/cache/service restore. The checklist still asks for persistent tests around
-encrypted DM/group sync.
+Existing live modes include `timeline-restart`, `group-timeline-restart`,
+`timeline-relaunch-seed`, `timeline-relaunch-verify`, `dm-e2ee`, `group-e2ee`,
+`dm-attachment`, and `group-attachment`. The wrapper
+`apple/scripts/run-persistent-sync-gate.sh` is the repeatable entrypoint.
 
 ## Goal
 
-Add a repeatable test or script gate that exercises encrypted DM and group sync
-across restart/persistence paths and can be run by future agents without
+Maintain a repeatable test or script gate that exercises encrypted DM and group
+sync across restart/persistence paths and can be run by future agents without
 reconstructing the command chain from memory.
 
 ## Non-Goals
@@ -61,8 +66,8 @@ reconstructing the command chain from memory.
    - explicit allow-send and allow-trust gates
 6. Document the wrapper in `apple/README.md`, including self-skip behavior and
    the exact env var names.
-7. Update `docs/mvp-checklist.md` only after the wrapper passes with live
-   credentials for both DM and group sync.
+7. Update `docs/mvp-checklist.md` only after a future wrapper change passes with
+   live credentials for both DM and group sync.
 
 ## Acceptance Criteria
 
@@ -74,7 +79,7 @@ reconstructing the command chain from memory.
   completion.
 - Passing live output is scrubbed and includes enough counts to diagnose
   failures.
-- The task updates `docs/mvp-checklist.md` with dated evidence only after a
+- Future updates to `docs/mvp-checklist.md` include dated evidence only after a
   credentialed pass.
 
 ## Verification Commands
@@ -87,6 +92,6 @@ bash -n apple/scripts/*.sh
 git diff --check
 ```
 
-Then run the new persistent sync wrapper with live disposable credentials. In
-the final report, include exact pass/fail status lines and whether any step was
-self-skipped.
+For future gate changes, run the persistent sync wrapper with live disposable
+credentials. In the final report, include exact pass/fail status lines and
+whether any step was self-skipped.

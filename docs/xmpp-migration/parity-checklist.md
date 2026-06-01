@@ -1,18 +1,40 @@
 # XMPP Product Parity Checklist
 
-Use this checklist to decide whether the XMPP+OMEMO implementation has reached
-Trix product parity. A checked item means both iOS and macOS have been
-verified unless the item explicitly names one platform.
+This checklist tracks XMPP+OMEMO parity against the current Apple and server
+implementation. It was refreshed against `docs/mvp-checklist.md` on
+2026-06-01.
+
+A checked item means the behavior is implemented and has either direct smoke
+evidence or is covered by a documented MVP closeout path. Unchecked items are
+still missing, not separately proven, or intentionally deferred.
+
+## Current Blockers
+
+- Encrypted calls are not launch-complete until signed-device DM video, group
+  voice, forced TURN relay, ten-participant group voice, and log audit pass.
+- Signed two-device trust proof is still open. Isolated local-profile smoke
+  proves distinct OMEMO devices and no silent trust, but not the real signed
+  two-device path.
+- Old sender-side OMEMO self-history cannot be backfilled from MAM when archived
+  stanzas were not encrypted for the current device. Do not work around this
+  with custom key recovery.
+- Server-side OMEMO key backup/recovery remains disabled until a reviewed
+  MartinOMEMO/libsignal path exists.
+- iOS physical-device APNs delivery is not called out as separate dated evidence
+  here; signed macOS APNs proof and shared iOS/macOS plumbing are in place.
 
 ## Account And Session
 
-- [ ] Operator-created account can log in on iOS.
-- [ ] Operator-created account can log in on macOS.
-- [ ] Logout clears local session state.
-- [ ] App relaunch restores a valid session without retyping the password.
-- [ ] Disabled account cannot establish a new session.
-- [ ] UI shows an understandable account-disabled state.
-- [ ] Credentials, tokens, and encrypted-store secrets are absent from logs.
+- [x] Operator-created account can log in on iOS.
+- [x] Operator-created account can log in on macOS.
+- [x] Logout clears saved XMPP login state while preserving local OMEMO
+      identity/trust state unless app Keychain data is reset.
+- [x] App relaunch restores a valid session without retyping the password.
+- [x] Disabled account cannot establish a new session through the operator
+      `ban_account` flow.
+- [ ] UI shows an independently verified account-disabled state.
+- [x] Credentials, tokens, and encrypted-store secrets are absent from documented
+      smoke output paths.
 
 Definition of done:
 
@@ -22,16 +44,16 @@ Definition of done:
 
 ## Inbox And Navigation
 
-- [ ] Room list shows DMs.
-- [ ] Room list shows groups.
-- [ ] Room list shows pending invitations.
-- [ ] User can accept an invitation.
-- [ ] User can decline an invitation.
-- [ ] Last message, timestamp, unread state, and sender summary are visible.
-- [ ] App restart reloads the same room list and selected timeline state where
-  appropriate.
-- [ ] iOS navigation matches the compact messenger shape expected for Trix.
-- [ ] macOS navigation supports the desktop workflows expected for Trix.
+- [x] Room list shows DMs.
+- [x] Room list shows groups.
+- [x] Room list shows pending invitations.
+- [x] User can accept an invitation.
+- [x] User can decline an invitation.
+- [x] Last message, timestamp, unread state, and sender summary are visible.
+- [x] App restart reloads room summaries and selected timeline state where
+      appropriate.
+- [x] iOS navigation matches the compact messenger shape expected for Trix.
+- [x] macOS navigation supports the desktop workflows expected for Trix.
 
 Definition of done:
 
@@ -40,15 +62,16 @@ Definition of done:
 
 ## Mandatory OMEMO
 
-- [ ] DM creation requires OMEMO.
-- [ ] Group creation requires OMEMO.
-- [ ] Text send requires an encrypted conversation.
-- [ ] Attachment send requires an encrypted conversation.
-- [ ] Missing OMEMO support blocks send with a visible reason.
-- [ ] Untrusted or unavailable participant device state blocks or warns
-  according to the documented trust policy.
-- [ ] Server-side stored message bodies are encrypted.
-- [ ] No production path logs decrypted message bodies.
+- [x] DM creation requires OMEMO.
+- [x] Group creation requires OMEMO.
+- [x] Text send requires an encrypted conversation.
+- [x] Attachment send requires an encrypted conversation.
+- [x] Missing OMEMO support blocks send with a visible reason.
+- [x] Untrusted or unavailable participant device state blocks according to the
+      documented trust policy.
+- [x] Server-side stored message bodies are encrypted.
+- [x] No production path logs decrypted message bodies in the documented smoke
+      lanes.
 
 Definition of done:
 
@@ -57,15 +80,16 @@ Definition of done:
 
 ## Direct Messages
 
-- [ ] Create a DM from directory/search result.
-- [ ] Open an existing DM.
-- [ ] Send text.
-- [ ] Receive text.
-- [ ] Show sender, timestamp, and delivery state.
-- [ ] Restart the app and reload history.
-- [ ] Multi-device delivery works for the same user where supported.
-- [ ] Duplicate one-to-one conversations are prevented or merged according to a
-  documented rule.
+- [x] Create a DM from directory/search result.
+- [x] Open an existing DM.
+- [x] Send text.
+- [x] Receive text.
+- [x] Show sender, timestamp, and delivery state.
+- [x] Restart the app and reload history for messages encrypted to the current
+      device.
+- [ ] Multi-device delivery works for the same user on real signed devices.
+- [ ] Duplicate one-to-one conversations are prevented or merged by an
+      explicitly documented smoke case.
 
 Definition of done:
 
@@ -73,16 +97,16 @@ Definition of done:
 
 ## Groups
 
-- [ ] Create a private group with at least three accounts.
-- [ ] Invite members.
-- [ ] Accept group invite.
-- [ ] Decline group invite.
-- [ ] Add member after creation.
-- [ ] Remove member where supported.
-- [ ] Leave group.
-- [ ] Show group title and member list.
-- [ ] Send and receive encrypted text from multiple participants.
-- [ ] Restart the app and reload group history.
+- [x] Create a private group with at least three accounts.
+- [x] Invite members.
+- [x] Accept group invite.
+- [x] Decline group invite.
+- [x] Add member after creation.
+- [x] Remove member where supported.
+- [x] Leave group through the server-backed control-plane path.
+- [x] Show group title and member list.
+- [x] Send and receive encrypted text from multiple participants.
+- [x] Restart the app and reload group history for decryptable group stanzas.
 
 Definition of done:
 
@@ -91,31 +115,33 @@ Definition of done:
 
 ## Attachments And Media
 
-- [ ] Send image attachment.
-- [ ] Send file attachment.
-- [ ] Download received attachment.
-- [ ] Preview image in app.
-- [ ] Open or share file through OS controls.
-- [ ] Attachment metadata does not expose plaintext message content beyond the
-  accepted server-side upload metadata policy.
-- [ ] Attachment retry and failure states are visible.
+- [x] Send image attachment.
+- [x] Send file attachment.
+- [x] Download received attachment.
+- [x] Preview image in app.
+- [x] Open, share, or export file through OS controls after local decrypt.
+- [x] Attachment metadata does not expose plaintext message content beyond the
+      accepted server-side upload metadata policy.
+- [x] Attachment retry and failure states are visible.
 
 Definition of done:
 
 - Attachment bytes round-trip through the selected XMPP upload path, and
-  message references to the attachment are sent only inside encrypted messages
-  where the chosen OMEMO/library model supports it.
+  message references to the attachment are sent only inside encrypted messages.
 
 ## Conversation UX
 
-- [ ] Composer sends on expected keyboard/action behavior.
-- [ ] Timeline shows outgoing, incoming, failed, and pending states.
-- [ ] Reactions are supported or explicitly deferred with a replacement UX.
-- [ ] Read receipts are supported or explicitly deferred with visible status.
-- [ ] Delivery status is supported or explicitly deferred with visible status.
-- [ ] Typing/composing indicators are supported or explicitly deferred.
-- [ ] Offline send behavior is documented and visible.
-- [ ] Retry behavior is visible for failed sends.
+- [x] Composer sends on expected keyboard/action behavior.
+- [x] Timeline shows outgoing, incoming, failed, blocked, and pending states.
+- [x] Reactions are wired through the model/service/view-model/UI and
+      Martin-backed XEP-0444 path; credentialed `dm-reaction` remains a focused
+      live follow-up.
+- [x] Read status is supported through local unread handling and the private
+      Trix read cursor; peer-visible XEP-0333 observation remains best effort.
+- [x] Delivery status is supported through XMPP delivery receipts.
+- [x] Typing/composing indicators are supported for DMs.
+- [ ] Offline send behavior is fully documented and verified as a product flow.
+- [x] Retry behavior is visible for failed attachment/download paths.
 
 Definition of done:
 
@@ -124,14 +150,14 @@ Definition of done:
 
 ## Directory, Profile, And Settings
 
-- [ ] Search for users available to Trix.
-- [ ] Start DM from a directory result.
-- [ ] Select group invitees from directory results.
-- [ ] View own profile.
-- [ ] Edit Trix-owned profile metadata.
-- [ ] View useful participant profile metadata.
-- [ ] Show device/encryption state.
-- [ ] Show server/account state.
+- [x] Search for users available to Trix.
+- [x] Start DM from a directory result.
+- [x] Select group invitees from directory results.
+- [x] View own profile.
+- [x] Edit Trix-owned profile metadata.
+- [x] View useful participant profile metadata.
+- [x] Show device/encryption state.
+- [x] Show server/account state.
 
 Definition of done:
 
@@ -141,12 +167,12 @@ Definition of done:
 
 ## Notifications
 
-- [ ] Foreground updates appear without manual refresh.
-- [ ] Background notifications work on iOS.
-- [ ] Background notifications work on macOS where supported.
-- [ ] Notification payloads do not contain decrypted message bodies unless a
-  documented local-notification path decrypts on device.
-- [ ] Badge/unread state matches the inbox.
+- [x] Foreground updates appear without manual refresh.
+- [ ] Background notifications have separate dated signed iOS device proof.
+- [x] Background notifications work on signed macOS with generic APNs text.
+- [x] Notification payloads do not contain decrypted message bodies, filenames,
+      media keys, or attachment metadata in the documented live proof.
+- [x] Badge/unread state is local and sync-driven, not plaintext push content.
 
 Definition of done:
 
@@ -155,14 +181,14 @@ Definition of done:
 
 ## Operations And Admin
 
-- [ ] Create account through Trix control plane.
-- [ ] Disable account through Trix control plane.
-- [ ] Rotate invite or bootstrap credential.
-- [ ] Inspect group membership through Trix control plane.
-- [ ] Inspect server health.
-- [ ] Confirm backup status.
-- [ ] Restore from backup.
-- [ ] Produce redacted diagnostics for support.
+- [x] Create account through Trix control plane.
+- [x] Disable account through Trix control plane.
+- [x] Rotate invite or bootstrap credential through the invite/control wrapper.
+- [ ] Inspect group membership through an operator control-plane view.
+- [x] Inspect server health.
+- [x] Confirm backup status.
+- [x] Restore from backup.
+- [x] Produce redacted diagnostics for support/operator use.
 
 Definition of done:
 
@@ -171,13 +197,13 @@ Definition of done:
 
 ## Release
 
-- [ ] iOS debug build.
-- [ ] macOS debug build.
-- [ ] iOS TestFlight archive path.
-- [ ] macOS TestFlight/archive path.
-- [ ] Fresh install login smoke.
+- [x] iOS debug build.
+- [x] macOS debug build.
+- [x] iOS TestFlight archive path.
+- [x] macOS TestFlight/archive path.
+- [x] Fresh install login smoke path.
 - [ ] Upgrade from previous build keeps valid local state or presents a clear
-  reset/migration state.
+      reset/migration state.
 
 Definition of done:
 

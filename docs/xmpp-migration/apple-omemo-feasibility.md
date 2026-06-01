@@ -76,8 +76,10 @@ license review.
 - HTTP upload URLs are bearer-style; encrypted media requires client-side media
   wrapping and an explicit metadata exposure policy.
 - APNs uses `trix-push-gateway` behind XMPP push semantics. Server modules do
-  not send APNs directly; signed-device visible generic delivery smoke is still
-  pending.
+  not send APNs directly. Signed macOS APNs delivery has passed with generic,
+  plaintext-free visible text, and the live gateway now handles XMPP component
+  publishes as silent sync wakes. Treat any iOS physical-device proof as a
+  platform-specific follow-up, not as the current APNs MVP blocker.
 
 ## Required Smoke Tests
 
@@ -97,8 +99,8 @@ license review.
    untrust actions.
 9. Send image and file attachments via HTTP upload plus encrypted media wrapping;
    download and byte-compare.
-10. Enable APNs through a Trix push service and confirm payloads contain no
-    plaintext message bodies.
+10. Keep APNs routed through the Trix push service and confirm payloads contain
+    no plaintext message bodies when new push paths are added.
 11. Interop-test with Monal and at least one non-Apple OMEMO client before
     claiming XMPP ecosystem compatibility.
 12. Keep the SBOM/license record current before distribution.
@@ -109,6 +111,6 @@ Continue Apple XMPP implementation only in fail-closed slices: no plaintext
 fallback, no silent device trust, and no custom crypto. For the current
 non-commercial friends app, Tigase Martin plus MartinOMEMO is the accepted MVP
 path with GPL/AGPL obligations documented in `license-sbom.md`. Launch readiness
-still depends on the remaining live smoke, device-management, recovery, APNs,
-attachment, restart-history, and broader multi-device validation items tracked
-in `docs/mvp-checklist.md`.
+still depends on encrypted-call signed-device proof, signed two-device trust
+proof, the reviewed recovery/backfill blocker, and any broader multi-device or
+interop validation called out in `docs/mvp-checklist.md`.

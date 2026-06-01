@@ -1,8 +1,12 @@
 # Task: Full Signed-App Quit/Relaunch Timeline Smoke
 
-You are the next coding agent working in the Trix repo. Prove timeline restore
-through a real signed app process quit and relaunch, not just an in-process
-service restart.
+This task is closed for the current MVP. On 2026-05-20 the signed macOS
+persistent gate ran `timeline-relaunch-seed` and `timeline-relaunch-verify` in
+separate processes, restored from the smoke Keychain session, found nonzero
+timeline overlap, and cleaned up the smoke marker/session state.
+
+Keep this file as the historical signed-relaunch smoke plan. Reopen it only if
+the process-level relaunch proof regresses or the release gate changes.
 
 ## Current Context
 
@@ -18,16 +22,17 @@ Relevant files:
 - `apple/Sources/Shared/Services/XMPPMartinService.swift`
 - `apple/Sources/Shared/Services/TrixTimelineCacheStore.swift`
 
-`timeline-restart` currently logs in, optionally sends a generated OMEMO DM,
-loads timeline state, creates a fresh `XMPPMartinService` in the same process,
-restores, and checks overlapping item IDs. The MVP item still requires a full
-signed app process quit/relaunch.
+`timeline-restart` logs in, optionally sends a generated OMEMO DM, loads
+timeline state, creates a fresh `XMPPMartinService` in the same process,
+restores, and checks overlapping item IDs. The process-level proof is handled by
+`timeline-relaunch-seed` and `timeline-relaunch-verify`, normally through
+`apple/scripts/run-persistent-sync-gate.sh --include-keychain-relaunch`.
 
 ## Goal
 
-Add and run a repeatable smoke that launches a signed app bundle, creates or
-loads encrypted timeline state, quits the OS process, relaunches the app, and
-proves the timeline restores without retyping the password.
+Maintain a repeatable smoke that launches a signed app bundle, creates or loads
+encrypted timeline state, quits the OS process, relaunches the app, and proves
+the timeline restores without retyping the password.
 
 ## Non-Goals
 
@@ -58,8 +63,8 @@ proves the timeline restores without retyping the password.
    cleanup and document the risk.
 5. Capture only `TRIX_XMPP_LIVE_SMOKE` status lines. Do not print message text.
 6. Update `apple/README.md` with the process-level smoke command and env vars.
-7. Update `docs/mvp-checklist.md` only after the signed app relaunch proof
-   passes.
+7. Update `docs/mvp-checklist.md` only after future signed-app relaunch changes
+   pass again.
 
 ## Acceptance Criteria
 
@@ -83,6 +88,7 @@ bash -n apple/scripts/*.sh
 git diff --check
 ```
 
-Then run the new signed-app quit/relaunch smoke with disposable live
-credentials. If signing, device access, or credentials are unavailable, report
-the exact blocker and leave the MVP item unchecked.
+For future relaunch-gate changes, run the signed-app quit/relaunch smoke with
+disposable live credentials. If signing, device access, or credentials are
+unavailable, report the exact blocker for that change rather than editing the
+closed MVP item.

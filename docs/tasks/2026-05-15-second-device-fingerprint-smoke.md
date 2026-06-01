@@ -1,8 +1,9 @@
 # Task: Second-Device Fingerprint Smoke
 
-You are the next coding agent working in the Trix repo. Prove that a real
-two-device account exposes OMEMO device IDs and fingerprints without silently
-trusting the new device.
+This task remains open only for real signed-device proof. The scrubbed
+`second-device-fingerprint` smoke mode now proves distinct isolated
+local-profile OMEMO device IDs, fingerprint presence, and no silent trust, but
+`docs/mvp-checklist.md` still requires a live signed two-device run.
 
 ## Current Context
 
@@ -19,13 +20,13 @@ Relevant files:
 - `apple/Sources/Shared/ViewModels/DeviceVerificationViewModel.swift`
 - `apple/Sources/Shared/Views/TrixRoomListView.swift`
 
-The Settings and peer-device paths are wired, and `peer-devices` /
-`trust-peer` live-smoke modes exist. The checklist still requires adding a
-second device and validating visible fingerprint state in a live two-device run.
+The Settings and peer-device paths are wired. `peer-devices`, `trust-peer`,
+`second-device-fingerprint`, and `own-device-revocation` live-smoke modes exist.
+The remaining proof is a signed two-device run, not a local-profile simulation.
 
 ## Goal
 
-Run or add a repeatable smoke that signs into the same account from two distinct
+Run a signed-device smoke that signs into the same account from two distinct
 device identities, confirms both OMEMO devices are published and visible, shows
 non-empty fingerprints, and confirms the app does not silently trust the new
 device.
@@ -42,8 +43,8 @@ device.
 1. First try a real signed-device run: two physical devices, or one physical
    device plus a separately installed signed macOS app, logged into the same
    disposable account.
-2. If repeatable automation is needed, add a smoke mode such as
-   `second-device-fingerprint`. Be careful with persistence:
+2. If repeatable automation needs changes, start from the existing
+   `second-device-fingerprint` mode. Be careful with persistence:
    - `TrixOMEMOStore` keychain state is keyed by account, so two services using
      the same keychain account may share one OMEMO identity.
    - A valid automated second-device smoke must use genuinely separate OMEMO

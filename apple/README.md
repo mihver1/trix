@@ -121,11 +121,13 @@ The checked-in Apple app now has fail-closed APNs plumbing:
 Current MVP status: `server/xmpp` enables ejabberd `mod_push` and the checked-in
 `trix-push-gateway` provides the private XEP-0114 component that accepts
 Martin/Tigase APNs token registration, maps XEP-0357 nodes, signs APNs requests,
-and emits the generic sync notification contract above. On 2026-05-10 the gateway was
-deployed on the VPS with deployment-local APNs token-auth material and connected
-to ejabberd as `push.trix.selfhost.ru`. Signed macOS APNs smoke passed on
-2026-05-20 with gateway/APNs provider acceptance and QA-visible notification
-text limited to the generic Trix alert.
+and emits the generic sync notification contract above. On 2026-05-10 the
+gateway was deployed on the VPS with deployment-local APNs token-auth material
+and connected to ejabberd as `push.trix.selfhost.ru`. Signed macOS APNs smoke
+passed on 2026-05-20 with gateway/APNs provider acceptance and QA-visible
+notification text limited to the generic Trix alert. On 2026-06-01 the live
+deployment was adjusted so XMPP component publishes produce silent APNs sync
+wakes while visible notification text remains local and generic after sync.
 
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
@@ -572,8 +574,8 @@ XMPP and OMEMO calls behind service and view-model layers.
 
 ## XMPP/OMEMO Implementation Gates
 
-Do not wire production XMPP code directly into SwiftUI views. First close these
-gates:
+Do not wire production XMPP code directly into SwiftUI views. Keep these gates
+accurate as the implementation changes:
 
 1. Confirm the Apple XMPP library path. Current first candidate: Martin
    `3.2.4` plus MartinOMEMO `2.2.3`.
@@ -581,11 +583,16 @@ gates:
    GPL/AGPL obligations are accepted for that scope in
    `docs/xmpp-migration/license-sbom.md`.
 3. Keep the license/SBOM record current before broader distribution.
-4. Validate encrypted DM receive and live two-account DM send with `dm-e2ee`.
-5. Validate encrypted group send/receive in a members-only, non-anonymous MUC.
-6. Validate MAM restart/offline history.
-7. Validate XEP-0444 DM reactions with `dm-reaction`.
-8. Validate encrypted attachment upload/download with `dm-attachment` and
+4. Encrypted DM receive and live two-account DM send are validated with
+   `dm-e2ee`.
+5. Encrypted group send/receive in a members-only, non-anonymous MUC is
+   validated with three accounts.
+6. MAM restart/offline history is validated for current-device decryptable DM
+   and group stanzas; older sender-side stanzas without a local recipient key
+   remain blocked on reviewed recovery/backfill.
+7. XEP-0444 DM reactions are wired; use `dm-reaction` for focused live
+   validation after reaction changes.
+8. Encrypted attachment upload/download is validated with `dm-attachment` and
    `group-attachment`; both modes print only scrubbed status lines.
 9. Validate static Telegram sticker import, local encrypted library
    persistence, and received Telegram sticker pack import. The checked-in unit
@@ -595,7 +602,9 @@ gates:
 10. Live-validate the broader device trust UX with a second signed device. The
    Settings surface and manual per-device visual fingerprint trust are wired;
    live second-device validation is still pending.
-11. Validate APNs push without plaintext payloads.
+11. APNs push without plaintext payloads is validated for signed macOS and the
+    shared iOS/macOS plumbing. Keep separate physical iOS evidence if the
+    release gate requires it.
 
 Group OMEMO evidence from the checked libraries: Martin exposes `MucModule`
 join/configuration/invite/affiliation APIs, and MartinOMEMO exposes
@@ -627,9 +636,9 @@ and [../docs/xmpp-migration/spike-checklist.md](../docs/xmpp-migration/spike-che
 
 ## Planned Cleanup
 
-After the XMPP adapter grows encrypted messaging:
+Remaining cleanup:
 
 1. Remove the temporary `matrix-*` just lane aliases after downstream callers
    have moved to `trix-*`.
-2. Add broader persistent tests around encrypted DM/group sync and
-   directory/profile flows.
+2. Keep the persistent sync and directory/profile smoke wrappers current when
+   the service boundary changes.

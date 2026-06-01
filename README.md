@@ -123,23 +123,31 @@ cargo run -p trix-call-control
 
 ## MVP Status
 
-Current target work:
+Current completed MVP surface:
 
 - XMPP server scaffold and local smoke environment.
 - Apple OMEMO feasibility and Martin/MartinOMEMO integration.
 - Mandatory encrypted DM send/receive.
 - Mandatory encrypted group send/receive.
+- Encrypted attachments, inline image previews, static Telegram stickers, and
+  local encrypted media/sticker caches.
 - Directory-backed DM/group creation.
-- Centralized operator control plane.
+- Centralized operator control plane plus the local macOS admin app/backend.
 - Push notifications through APNs without plaintext payloads.
+- Persistent encrypted DM/group sync and signed macOS process relaunch smoke.
 - DM video-call and group voice-room scaffolding with LiveKit media E2EE.
 - TestFlight archive path for the new iOS and macOS clients.
 
 Not production-ready:
 
-- Apple OMEMO implementation path still needs signed-device validation.
-- Group OMEMO over MUC still needs end-to-end smoke coverage.
-- Push, directory/control-plane, and release smokes still need full closeout.
+- Encrypted calls still need the full signed-device launch gate: DM video,
+  CallKit/PushKit answer, bidirectional media, reconnect, group voice with three
+  and ten participants, forced TURN relay, and log audit.
+- Real signed two-device OMEMO trust proof is still pending. The app exposes
+  device state and visual fingerprints, but signed two-device validation is not
+  closed.
+- Server-side OMEMO key backup/recovery and older sender-side self-history
+  backfill remain blocked until a reviewed MartinOMEMO/libsignal path exists.
 
 ## Documentation
 

@@ -1,7 +1,11 @@
 # Task: Server-Backed Group Leave
 
-You are the next coding agent working in the Trix repo. Replace the current
-local-only group leave with a real Martin MUC leave path, then live-validate it.
+This task is closed for the current MVP. The Apple timeline now calls the Trix
+control-plane `POST /v1/groups/leave` path before local `mucModule.leave`, and
+the hosted three-account `group-leave` smoke passed on 2026-05-21.
+
+Keep this file as the historical implementation plan. Reopen it only if
+server-backed leave regresses or the group-membership policy changes.
 
 ## Current Context
 
@@ -20,15 +24,17 @@ Relevant files:
 - `apple/Sources/Shared/Views/TrixTimelineView.swift`
 - `apple/Sources/Shared/App/XMPPLiveSmokeRunner.swift`
 
-The current UI says group leave is local-only and calls `forgetRoomLocally`.
-The service protocol has member list, invite, and remove operations, but no
-server-backed leave operation.
+The current implementation removes a non-owner member through the authenticated
+Trix group-control wrapper, then performs local MUC leave and hides the room
+only after server membership removal succeeds. Owner and remaining members keep
+the room.
 
 ## Goal
 
-A user can leave a private MUC group through the Apple app. The app sends a real
-MUC leave through Martin, removes the group from local navigation after success,
-and does not claim to delete the group for other members.
+Maintain the Apple group-leave flow: a user can leave a private MUC group
+through the app, the app removes the group from local navigation only after the
+server-backed path succeeds, and the UI does not claim to delete the group for
+other members.
 
 ## Non-Goals
 
@@ -69,7 +75,8 @@ and does not claim to delete the group for other members.
    - Print only IDs/status counts, never message bodies or credentials.
 7. Update `apple/README.md` with the new live-smoke mode and its required env
    variables.
-8. Update `docs/mvp-checklist.md` only after the smoke passes.
+8. Update `docs/mvp-checklist.md` only after future behavior changes pass the
+   smoke again.
 
 ## Acceptance Criteria
 
@@ -90,6 +97,7 @@ bash -n apple/scripts/archive-testflight.sh server/xmpp/scripts/*.sh
 git diff --check
 ```
 
-Also run the new `group-leave` live smoke against disposable accounts on
-`trix.selfhost.ru` or the local XMPP scaffold. Report the exact scrubbed status
-lines and leave the checklist open if live validation cannot be completed.
+For future group-leave changes, run `group-leave` live smoke against disposable
+accounts on `trix.selfhost.ru` or the local XMPP scaffold. Report the exact
+scrubbed status lines and keep the current checklist state unless fresh evidence
+requires a change.
