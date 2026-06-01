@@ -10,6 +10,7 @@ version := `awk -F= '/^[[:space:]]*VERSION[[:space:]]*=/{gsub(/[[:space:]"]/, ""
 trix_apple_dir := repo_root / "apple"
 trix_ios_derived_data := "/tmp/trix-ios-dd"
 trix_macos_derived_data := "/tmp/trix-macos-dd"
+trix_admin_macos_derived_data := "/tmp/trix-admin-macos-dd"
 trix_app_bundle_id := "com.softgrid.trixapp"
 
 # Show current version.
@@ -162,12 +163,40 @@ trix-macos-build signing="automatic": xcodegen-trix-apple
     esac
     xcodebuild "${build_args[@]}"
 
+# Build the Trix macOS admin app; signing: automatic|unsigned.
+trix-admin-macos-build signing="automatic": xcodegen-trix-apple
+    #!/usr/bin/env bash
+    set -euo pipefail
+    signing="{{ signing }}"
+    build_args=(
+      -project "{{ trix_apple_dir }}/TrixMatrix.xcodeproj"
+      -scheme TrixAdminMac
+      -destination 'platform=macOS'
+      -derivedDataPath "{{ trix_admin_macos_derived_data }}"
+      build
+    )
+    case "$signing" in
+      automatic) ;;
+      unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
+      *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
+    esac
+    xcodebuild "${build_args[@]}"
+
 # Build and launch the XMPP Trix macOS app.
 trix-macos-run signing="automatic":
     #!/usr/bin/env bash
     set -euo pipefail
     just --justfile "{{ repo_root }}/justfile" trix-macos-build "{{ signing }}"
     app="{{ trix_macos_derived_data }}/Build/Products/Debug/Trix.app"
+    [[ -d "$app" ]] || { echo "error: built app not found at $app" >&2; exit 1; }
+    open "$app"
+
+# Build and launch the Trix macOS admin app.
+trix-admin-macos-run signing="automatic":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile "{{ repo_root }}/justfile" trix-admin-macos-build "{{ signing }}"
+    app="{{ trix_admin_macos_derived_data }}/Build/Products/Debug/Trix Admin.app"
     [[ -d "$app" ]] || { echo "error: built app not found at $app" >&2; exit 1; }
     open "$app"
 

@@ -5,10 +5,19 @@ struct TrixAdminRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(TrixAdminSection.allCases, selection: $model.selectedSection) { section in
-                Label(section.title, systemImage: section.symbol)
-                    .tag(section as TrixAdminSection?)
+            List(TrixAdminSection.allCases) { section in
+                Button {
+                    model.selectedSection = section
+                } label: {
+                    Label(section.title, systemImage: section.symbol)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(model.currentSection == section ? Color.accentColor.opacity(0.14) : Color.clear)
+                .accessibilityAddTraits(model.currentSection == section ? .isSelected : [])
             }
+            .listStyle(.sidebar)
             .navigationTitle("Trix Admin")
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
