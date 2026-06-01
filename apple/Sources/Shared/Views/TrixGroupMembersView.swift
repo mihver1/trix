@@ -337,7 +337,7 @@ private struct TrixGroupMemberRow: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
 
-                Text(isCurrentUser ? "You" : member.userID)
+                Text(isCurrentUser ? "You" : TrixUserIdentity.handle(from: member.userID))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

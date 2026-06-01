@@ -18,7 +18,7 @@ struct TrixUserDirectoryPickerView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
 
-                TextField("Search people or enter JID", text: $searchViewModel.query)
+                TextField("Search people or enter handle", text: $searchViewModel.query)
                     .trixDirectorySearchInput()
             }
             .padding(.horizontal, 10)

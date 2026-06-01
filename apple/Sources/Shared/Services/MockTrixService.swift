@@ -166,10 +166,8 @@ actor MockTrixService: TrixService {
     }
 
     func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession {
-        let normalizedUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalizedUserID.hasPrefix("@"),
-              normalizedUserID.contains(":\(TrixClientConfiguration.serverName)"),
-              !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let normalizedUserID = try Self.normalizedTrixUserID(userID)
+        guard !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TrixClientError.invalidCredentials
         }
 
@@ -1257,18 +1255,6 @@ actor MockTrixService: TrixService {
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("@"),
-              let separator = trimmed.firstIndex(of: ":"),
-              separator != trimmed.index(after: trimmed.startIndex) else {
-            throw TrixClientError.invalidTrixUserID
-        }
-
-        let serverName = String(trimmed[trimmed.index(after: separator)...])
-        guard serverName == TrixClientConfiguration.serverName else {
-            throw TrixClientError.invalidTrixUserID
-        }
-
-        return trimmed
+        try TrixUserIdentity.normalizedMatrixUserID(userID)
     }
 }

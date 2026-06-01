@@ -12,7 +12,7 @@ struct TrixProfileSettingsView: View {
             }
 
             if let profile = viewModel.profile {
-                LabeledContent("User", value: profile.userID)
+                LabeledContent("User", value: TrixUserIdentity.handle(from: profile.userID))
 
                 if let avatarURL = profile.avatarURL {
                     LabeledContent("Avatar", value: avatarURL)

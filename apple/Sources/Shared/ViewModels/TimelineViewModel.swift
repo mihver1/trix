@@ -1103,18 +1103,7 @@ final class TimelineViewModel: ObservableObject {
     }
 
     private static func normalizedUserKey(_ userID: String) -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard trimmed.hasPrefix("@"),
-              let separator = trimmed.firstIndex(of: ":") else {
-            return trimmed
-        }
-
-        let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
-        let server = trimmed[trimmed.index(after: separator)...]
-        guard !localpart.isEmpty, !server.isEmpty else {
-            return trimmed
-        }
-
-        return "\(localpart)@\(server)"
+        (try? TrixUserIdentity.normalizedXMPPUserID(userID)) ??
+            userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }

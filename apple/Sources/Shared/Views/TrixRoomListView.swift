@@ -428,7 +428,7 @@ struct TrixSettingsView: View {
         Form {
             Section("Account") {
                 if let account = model.account {
-                    LabeledContent("User", value: account.userID)
+                    LabeledContent("User", value: TrixUserIdentity.handle(from: account.userID))
                     LabeledContent("Device", value: account.deviceID)
                 } else {
                     TrixEmptyStateView(
@@ -436,10 +436,6 @@ struct TrixSettingsView: View {
                         systemImage: "person.crop.circle.badge.exclamationmark",
                         message: "Sign in before managing account settings."
                     )
-                }
-
-                if let homeserverURL = model.session?.homeserverURL.absoluteString {
-                    LabeledContent("Server", value: homeserverURL)
                 }
 
                 Button {
@@ -470,7 +466,7 @@ struct TrixSettingsView: View {
             }
 
             Section("Connection") {
-                LabeledContent("Server", value: model.session?.homeserverURL.absoluteString ?? XMPPClientConfiguration.connectionURL.absoluteString)
+                LabeledContent("Server", value: "Trix private server")
                 LabeledContent("State", value: model.isAuthenticated ? "Session restored" : "Signed out")
                 LabeledContent("Last checked", value: lastCheckedLabel)
 
@@ -489,7 +485,7 @@ struct TrixSettingsView: View {
                 if let registration = model.pushRegistration {
                     LabeledContent("Environment", value: registration.environment.rawValue)
                     LabeledContent("Provider", value: registration.provider)
-                    LabeledContent("Gateway", value: registration.gatewayJID)
+                    LabeledContent("Gateway", value: "Configured")
                 } else if let blocker = model.pushRegistrationBlocker {
                     Text(blockerExplanation(blocker))
                         .font(.callout)
@@ -626,8 +622,8 @@ struct TrixSettingsView: View {
 
     private var diagnosticRows: [(String, String)] {
         [
-            ("Account", model.account?.userID ?? "Signed out"),
-            ("Server", model.session?.homeserverURL.host ?? XMPPClientConfiguration.serverName),
+            ("Account", model.account.map { TrixUserIdentity.handle(from: $0.userID) } ?? "Signed out"),
+            ("Server", "Trix private server"),
             ("Rooms", "\(roomListViewModel.rooms.count)"),
             ("Invites", "\(roomListViewModel.invitations.count)"),
             ("Unread", "\(roomListViewModel.totalUnreadCount)"),
@@ -671,7 +667,7 @@ private struct TrixInboxAccountHeader: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 TrixAvatarView(
-                    title: account.displayName.isEmpty ? account.userID : account.displayName,
+                    title: account.displayName.isEmpty ? TrixUserIdentity.displayName(from: account.userID) : account.displayName,
                     systemImage: "person.crop.circle",
                     size: 32
                 )
@@ -681,7 +677,7 @@ private struct TrixInboxAccountHeader: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
 
-                    Text(account.userID)
+                    Text(TrixUserIdentity.handle(from: account.userID))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -834,7 +830,7 @@ private struct TrixRoomRow: View {
     }
 
     private var roomTitle: String {
-        room.name.isEmpty ? room.id : room.name
+        room.name.isEmpty ? TrixUserIdentity.displayName(from: room.id) : room.name
     }
 
     private var cappedUnreadCount: String {

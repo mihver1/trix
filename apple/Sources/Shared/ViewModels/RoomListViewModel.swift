@@ -208,28 +208,7 @@ final class RoomListViewModel: ObservableObject {
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed.hasPrefix("@"), let separator = trimmed.firstIndex(of: ":") {
-            let localpart = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator])
-            let serverName = String(trimmed[trimmed.index(after: separator)...])
-            guard !localpart.isEmpty, serverName == XMPPClientConfiguration.serverName else {
-                throw TrixClientError.invalidTrixUserID
-            }
-
-            return "\(localpart)@\(serverName)"
-        }
-
-        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let localpart = parts.first,
-              let serverName = parts.last,
-              !localpart.isEmpty,
-              serverName == XMPPClientConfiguration.serverName,
-              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw TrixClientError.invalidTrixUserID
-        }
-
-        return trimmed
+        try TrixUserIdentity.normalizedXMPPUserID(userID)
     }
 
     private static func normalizedTrixUserIDs(_ userIDs: [String], excluding currentUserID: String) throws -> [String] {
@@ -255,18 +234,7 @@ final class RoomListViewModel: ObservableObject {
     }
 
     private static func displayName(from userID: String) -> String {
-        if userID.hasPrefix("@") {
-            return userID
-                .dropFirst()
-                .split(separator: ":")
-                .first
-                .map { String($0).capitalized } ?? userID
-        }
-
-        return userID
-            .split(separator: "@")
-            .first
-            .map { String($0).capitalized } ?? userID
+        TrixUserIdentity.displayName(from: userID)
     }
 
     private func mergedRoomsAfterReload(

@@ -47,30 +47,11 @@ struct TrixUserProfile: Identifiable, Equatable, Sendable {
             return displayName
         }
 
-        return Self.displayName(from: userID)
+        return TrixUserIdentity.displayName(from: userID)
     }
 
     var subtitle: String {
-        userID
-    }
-
-    private static func displayName(from userID: String) -> String {
-        if userID.hasPrefix("@") {
-            let localpart = userID
-                .dropFirst()
-                .split(separator: ":")
-                .first
-                .map(String.init)
-
-            return localpart?.capitalized ?? userID
-        }
-
-        let localpart = userID
-            .split(separator: "@")
-            .first
-            .map(String.init)
-
-        return localpart?.capitalized ?? userID
+        TrixUserIdentity.handle(from: userID)
     }
 }
 
@@ -924,7 +905,7 @@ struct TrixRoomInvite: Identifiable, Equatable, Sendable {
             return inviterDisplayName
         }
 
-        return inviterUserID ?? "Unknown inviter"
+        return inviterUserID.map { TrixUserIdentity.displayName(from: $0) } ?? "Unknown inviter"
     }
 
     var subtitle: String {
@@ -989,26 +970,7 @@ struct TrixRoomMember: Identifiable, Equatable, Sendable {
             return displayName
         }
 
-        return Self.displayName(from: userID)
-    }
-
-    private static func displayName(from userID: String) -> String {
-        if userID.hasPrefix("@") {
-            let localpart = userID
-                .dropFirst()
-                .split(separator: ":")
-                .first
-                .map(String.init)
-
-            return localpart?.capitalized ?? userID
-        }
-
-        let localpart = userID
-            .split(separator: "@")
-            .first
-            .map(String.init)
-
-        return localpart?.capitalized ?? userID
+        return TrixUserIdentity.displayName(from: userID)
     }
 }
 
@@ -2401,9 +2363,9 @@ enum TrixClientError: LocalizedError {
         case .invalidHomeserver:
             return "The server address is invalid."
         case .invalidCredentials:
-            return "Enter an XMPP JID and password."
+            return "Enter your Trix handle and password."
         case .invalidTrixUserID:
-            return "Enter an XMPP JID on trix.selfhost.ru."
+            return "Enter a local Trix handle."
         case .groupRoomNameRequired:
             return "Enter a group name."
         case .groupInviteesRequired:

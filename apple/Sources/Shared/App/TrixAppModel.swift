@@ -274,19 +274,7 @@ final class TrixAppModel: ObservableObject {
     }
 
     private static func fallbackDisplayName(from userID: String) -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("@") {
-            return trimmed
-                .dropFirst()
-                .split(separator: ":")
-                .first
-                .map { String($0).capitalized } ?? trimmed
-        }
-
-        return trimmed
-            .split(separator: "@")
-            .first
-            .map { String($0).capitalized } ?? trimmed
+        TrixUserIdentity.displayName(from: userID)
     }
 
     private static func shouldPreserveSavedSessionAfterRestoreError(_ error: Error) -> Bool {
@@ -1962,19 +1950,8 @@ final class TrixAppModel: ObservableObject {
     }
 
     private static func normalizedUserKey(_ userID: String) -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard trimmed.hasPrefix("@"),
-              let separator = trimmed.firstIndex(of: ":") else {
-            return trimmed
-        }
-
-        let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
-        let server = trimmed[trimmed.index(after: separator)...]
-        guard !localpart.isEmpty, !server.isEmpty else {
-            return trimmed
-        }
-
-        return "\(localpart)@\(server)"
+        (try? TrixUserIdentity.normalizedXMPPUserID(userID)) ??
+            userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func applyRoomNotificationProfileSnapshot(_ snapshot: TrixRoomNotificationProfileSnapshot) {

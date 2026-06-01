@@ -5434,31 +5434,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     }
 
     private static func normalizedXMPPJID(_ userID: String) throws -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else {
-            throw TrixClientError.invalidTrixUserID
-        }
-
-        if trimmed.hasPrefix("@"), let separator = trimmed.firstIndex(of: ":") {
-            let localpart = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator])
-            let server = String(trimmed[trimmed.index(after: separator)...])
-            guard !localpart.isEmpty, server == XMPPClientConfiguration.serverName else {
-                throw TrixClientError.invalidTrixUserID
-            }
-            return "\(localpart)@\(server)"
-        }
-
-        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let localpart = parts.first,
-              let domain = parts.last,
-              !localpart.isEmpty,
-              domain == XMPPClientConfiguration.serverName,
-              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw TrixClientError.invalidTrixUserID
-        }
-
-        return trimmed
+        try TrixUserIdentity.normalizedXMPPUserID(userID)
     }
 
     private static func normalizedMUCJID(_ roomID: String) throws -> String {
@@ -6096,19 +6072,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     }
 
     private static func displayName(from jid: String) -> String {
-        let trimmed = jid.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("@") {
-            return trimmed
-                .dropFirst()
-                .split(separator: ":")
-                .first
-                .map { String($0).capitalized } ?? trimmed
-        }
-
-        return trimmed
-            .split(separator: "@")
-            .first
-            .map { String($0).capitalized } ?? trimmed
+        TrixUserIdentity.displayName(from: jid)
     }
 
     private static func resourceName() -> String {

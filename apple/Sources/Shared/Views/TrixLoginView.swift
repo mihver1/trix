@@ -3,7 +3,7 @@ import SwiftUI
 struct TrixLoginView: View {
     @ObservedObject var model: TrixAppModel
     @State private var authMode: AuthMode = .login
-    @State private var userID = "friend@trix.selfhost.ru"
+    @State private var userID = "friend"
     @State private var password = ""
     @State private var inviteCode = ""
     @State private var registrationLocalpart = ""
@@ -55,10 +55,7 @@ struct TrixLoginView: View {
                     .font(.largeTitle.weight(.semibold))
                     .lineLimit(1)
 
-                TrixStatusPill(
-                    title: XMPPClientConfiguration.serverName,
-                    systemImage: "server.rack"
-                )
+                TrixStatusPill(title: "Private server", systemImage: "lock.shield")
             }
         }
     }
@@ -85,10 +82,10 @@ struct TrixLoginView: View {
     private var loginForm: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("XMPP account")
+                Text("Handle")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TextField("user@trix.selfhost.ru", text: $userID)
+                TextField("friend", text: $userID)
                     .trixUserIDTextField()
                     .textFieldStyle(.roundedBorder)
             }
@@ -145,15 +142,9 @@ struct TrixLoginView: View {
                 Text("Handle")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    TextField("friend", text: $registrationLocalpart)
-                        .trixUserIDTextField()
-                        .textFieldStyle(.roundedBorder)
-                    Text("@\(XMPPClientConfiguration.serverName)")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                TextField("friend", text: $registrationLocalpart)
+                    .trixUserIDTextField()
+                    .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 6) {

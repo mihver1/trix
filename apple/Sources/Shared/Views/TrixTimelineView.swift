@@ -1858,12 +1858,7 @@ struct TrixTimelineView: View {
     }
 
     fileprivate static func displayName(from userID: String) -> String {
-        let localpart = userID
-            .split(separator: "@")
-            .first
-            .map(String.init)
-
-        return localpart?.capitalized ?? userID
+        TrixUserIdentity.displayName(from: userID)
     }
 
     private static func sortedActiveMembers(_ members: [TrixRoomMember]) -> [TrixRoomMember] {
@@ -2341,19 +2336,8 @@ private struct TrixTimelineDaySeparator: View {
 }
 
 private func trixNormalizedUserKey(_ userID: String) -> String {
-    let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard trimmed.hasPrefix("@"),
-          let separator = trimmed.firstIndex(of: ":") else {
-        return trimmed
-    }
-
-    let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
-    let server = trimmed[trimmed.index(after: separator)...]
-    guard !localpart.isEmpty, !server.isEmpty else {
-        return trimmed
-    }
-
-    return "\(localpart)@\(server)"
+    (try? TrixUserIdentity.normalizedXMPPUserID(userID)) ??
+        userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 }
 
 private struct TrixGroupDeviceTrustEntry: Identifiable {
@@ -2566,7 +2550,7 @@ private struct TrixGroupDeviceTrustMemberView: View {
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
 
-                    Text(entry.isCurrentUser ? "You" : entry.member.userID)
+                    Text(entry.isCurrentUser ? "You" : TrixUserIdentity.handle(from: entry.member.userID))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -2890,7 +2874,7 @@ private struct TrixMentionProfileView: View {
                     if let profile = viewModel.profile {
                         profileDetails(profile)
                     } else {
-                        LabeledContent("User", value: userID)
+                        LabeledContent("User", value: TrixUserIdentity.handle(from: userID))
                     }
 
                     if let directMessageError {
@@ -2931,7 +2915,7 @@ private struct TrixMentionProfileView: View {
                     .font(.headline)
                     .lineLimit(1)
 
-                Text(userID)
+                Text(TrixUserIdentity.handle(from: userID))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -3021,7 +3005,7 @@ private struct TrixMentionProfileView: View {
 
     @ViewBuilder
     private func profileDetails(_ profile: TrixUserProfile) -> some View {
-        LabeledContent("User", value: profile.userID)
+        LabeledContent("User", value: TrixUserIdentity.handle(from: profile.userID))
 
         if let statusMessage = profile.metadata.statusMessage {
             LabeledContent("Status", value: statusMessage)
@@ -3312,17 +3296,7 @@ private struct TrixTimelineRow: View {
     }
 
     private var displaySender: String {
-        let localpart = item.sender
-            .replacingOccurrences(of: "@", with: "")
-            .split(separator: ":")
-            .first
-            .map(String.init)
-
-        guard let localpart, !localpart.isEmpty else {
-            return item.sender
-        }
-
-        return localpart.capitalized
+        TrixUserIdentity.displayName(from: item.sender)
     }
 
     private var deliveryState: TrixDeliveryState {

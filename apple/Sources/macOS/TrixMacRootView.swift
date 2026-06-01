@@ -834,7 +834,7 @@ private struct TrixMacRoomContextView: View {
     private func conversationSubtitle(for room: TrixRoomSummary) -> String {
         if room.kind == .direct,
            let participant = counterparty(for: room) {
-            return participant.userID
+            return participant.subtitle
         }
 
         if membersRoomID == room.id, !members.isEmpty {
@@ -973,13 +973,7 @@ private struct TrixMacParticipant: Identifiable {
             return displayName
         }
 
-        let localpart = userID
-            .dropFirst()
-            .split(separator: ":")
-            .first
-            .map(String.init)
-
-        return localpart?.capitalized ?? userID
+        return TrixUserIdentity.displayName(from: userID)
     }
 
     var subtitle: String {
@@ -987,7 +981,7 @@ private struct TrixMacParticipant: Identifiable {
             return "You"
         }
 
-        return userID
+        return TrixUserIdentity.handle(from: userID)
     }
 
     var canRemove: Bool {
@@ -1292,7 +1286,7 @@ struct TrixMacSettingsView: View {
         GroupBox("Account") {
             VStack(alignment: .leading, spacing: 12) {
                 if let account = model.account {
-                    LabeledContent("User", value: account.userID)
+                    LabeledContent("User", value: TrixUserIdentity.handle(from: account.userID))
                     LabeledContent("Device", value: account.deviceID)
                 } else {
                     ContentUnavailableView(
@@ -1300,10 +1294,6 @@ struct TrixMacSettingsView: View {
                         systemImage: "person.crop.circle.badge.exclamationmark",
                         description: Text("Sign in from the main window before managing account settings.")
                     )
-                }
-
-                if let homeserverURL = model.session?.homeserverURL.absoluteString {
-                    LabeledContent("Server", value: homeserverURL)
                 }
 
                 LabeledContent("Connection", value: model.isAuthenticated ? "Session restored" : "Signed out")
@@ -1442,7 +1432,7 @@ struct TrixMacSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             GroupBox("Connection") {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("Server", value: model.session?.homeserverURL.absoluteString ?? XMPPClientConfiguration.connectionURL.absoluteString)
+                    LabeledContent("Server", value: "Trix private server")
                     LabeledContent("State", value: model.isAuthenticated ? "Session restored" : "Signed out")
                     LabeledContent("Last checked", value: lastCheckedLabel)
 
@@ -1465,7 +1455,7 @@ struct TrixMacSettingsView: View {
                     if let registration = model.pushRegistration {
                         LabeledContent("Environment", value: registration.environment.rawValue)
                         LabeledContent("Provider", value: registration.provider)
-                        LabeledContent("Gateway", value: registration.gatewayJID)
+                        LabeledContent("Gateway", value: "Configured")
                     } else if let blocker = model.pushRegistrationBlocker {
                         Text(blockerExplanation(blocker))
                             .font(.callout)
@@ -1510,8 +1500,8 @@ struct TrixMacSettingsView: View {
 
     private var diagnosticRows: [(String, String)] {
         [
-            ("Account", model.account?.userID ?? "Signed out"),
-            ("Server", model.session?.homeserverURL.host ?? XMPPClientConfiguration.serverName),
+            ("Account", model.account.map { TrixUserIdentity.handle(from: $0.userID) } ?? "Signed out"),
+            ("Server", "Trix private server"),
             ("Rooms", "\(roomListViewModel.rooms.count)"),
             ("Invites", "\(roomListViewModel.invitations.count)"),
             ("Unread", "\(totalUnreadCount)"),

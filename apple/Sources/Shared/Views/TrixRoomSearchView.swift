@@ -18,6 +18,7 @@ enum TrixRoomSearch {
         let matchedDirectoryUserIDs = Set(directoryResults.map { $0.userID.lowercased() })
         return rooms.filter { room in
             room.name.localizedCaseInsensitiveContains(needle) ||
+                TrixUserIdentity.handle(from: room.id).localizedCaseInsensitiveContains(needle) ||
                 room.id.localizedCaseInsensitiveContains(needle) ||
                 (room.kind == .direct && matchedDirectoryUserIDs.contains(room.id.lowercased()))
         }
