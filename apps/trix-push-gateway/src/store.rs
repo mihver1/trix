@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -89,6 +89,29 @@ impl PushRegistrationStore {
             .filter(|registration| registration.is_sync_registration())
             .filter(|registration| registration.disabled_at_unix.is_none())
             .cloned()
+    }
+
+    pub async fn sync_push_succeeded_recently(&self, node: &str, min_interval: Duration) -> bool {
+        let min_interval_secs = min_interval.as_secs();
+        if min_interval_secs == 0 {
+            return false;
+        }
+
+        let state = self.state.lock().await;
+        let Some(registration) = state
+            .registrations
+            .get(node)
+            .filter(|registration| registration.is_sync_registration())
+            .filter(|registration| registration.disabled_at_unix.is_none())
+        else {
+            return false;
+        };
+
+        let Some(last_success_at_unix) = registration.last_success_at_unix else {
+            return false;
+        };
+
+        unix_now().saturating_sub(last_success_at_unix) < min_interval_secs
     }
 
     pub async fn voip_registrations_for_owner(&self, owner_jid: &str) -> Vec<StoredRegistration> {
@@ -306,5 +329,47 @@ mod tests {
             provider_environment("apns-voip-production").expect("voip provider"),
             ApplePushEnvironment::Production
         );
+    }
+
+    #[tokio::test]
+    async fn recent_sync_success_suppresses_duplicate_pushes() {
+        let directory = std::env::temp_dir().join(format!(
+            "trix-push-store-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        std::fs::create_dir_all(&directory).expect("temp store directory");
+        let path = directory.join("registrations.json");
+        let store = PushRegistrationStore::open(path.clone())
+            .await
+            .expect("store opens");
+        let registration = store
+            .register("alice@trix.selfhost.ru/ios", "apns-sandbox", "001122aabbcc")
+            .await
+            .expect("registration succeeds");
+
+        assert!(
+            !store
+                .sync_push_succeeded_recently(&registration.node, Duration::from_secs(60))
+                .await
+        );
+
+        store
+            .mark_success(&registration.node)
+            .await
+            .expect("success persisted");
+
+        assert!(
+            store
+                .sync_push_succeeded_recently(&registration.node, Duration::from_secs(60))
+                .await
+        );
+        assert!(
+            !store
+                .sync_push_succeeded_recently(&registration.node, Duration::from_secs(0))
+                .await
+        );
+
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

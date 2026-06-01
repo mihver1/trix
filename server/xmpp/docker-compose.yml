@@ -36,6 +36,7 @@ services:
       TRIX_PUSH_LOG: ${TRIX_PUSH_LOG:-info,trix_push_gateway=debug,trix_push=debug}
       TRIX_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-}
       TRIX_PUSH_STORE_PATH: /var/lib/trix-push-gateway/registrations.json
+      TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS: ${TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS:-60}
       TRIX_XMPP_COMPONENT_ENABLED: "1"
       TRIX_XMPP_COMPONENT_HOST: ejabberd
       TRIX_XMPP_COMPONENT_PORT: 5347

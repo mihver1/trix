@@ -118,7 +118,11 @@ copying old implementation details.
       with APNs delivery success and no failures. After real message sends still
       produced no gateway publish attempts, live ejabberd was switched to
       `mod_push.notify_on: all` so encrypted or metadata-only XMPP stanzas can
-      wake registered clients while the app keeps notification text generic.
+      wake registered clients. The gateway now sends those XMPP component
+      publishes as silent APNs background wakes, while visible notification text
+      stays local and generic after sync. The gateway also rate-limits XMPP sync
+      wakes per registration node so repeated generic publishes do not churn
+      Apple devices.
 - [ ] Encrypted calls. The first checked-in slice adds the LiveKit/coturn media
       deployment profile, `trix-call-control`, Apple call descriptors,
       `TrixCallControlService`, `TrixMediaCallService`, LiveKit Swift dependency,
@@ -485,7 +489,9 @@ copying old implementation details.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
       Martin/Tigase registration, stores XEP-0357 node mappings, stores separate
       VoIP PushKit registrations under `trix-voip/`, and calls the APNs sender
-      with generic sync notification payloads or opaque call-push payloads.
+      with silent sync wake payloads for XEP-0357 component publishes, generic
+      sync notification payloads for the internal HTTP notification endpoint, or
+      opaque call-push payloads.
 - [x] Trix APNs gateway/push component is deployed with deployment-local
       credentials outside the repo. On 2026-05-10 `trix-push-gateway` built on
       the VPS, started healthy, exposed `127.0.0.1:8090` only, and connected to

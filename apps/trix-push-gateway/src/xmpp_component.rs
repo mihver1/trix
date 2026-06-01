@@ -7,8 +7,8 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use tracing::{info, warn};
-use trix_push::{ApnsDeliveryOutcome, ApnsPushClient, ApnsPushTarget, TrixApnsNotificationPayload};
+use tracing::{debug, info, warn};
+use trix_push::{ApnsDeliveryOutcome, ApnsPushClient, ApnsPushTarget, TrixApnsWakePayload};
 
 use crate::store::PushRegistrationStore;
 
@@ -25,6 +25,7 @@ pub struct XmppComponentConfig {
     pub port: u16,
     pub jid: String,
     pub shared_secret: String,
+    pub sync_min_interval: Duration,
 }
 
 pub async fn run_component(
@@ -101,7 +102,7 @@ async fn run_once(
     loop {
         while let Some(stanza) = take_stanza(&mut buffer) {
             if let Some(response) =
-                handle_stanza(&config.jid, &stanza, store.clone(), apns.clone()).await
+                handle_stanza(config, &stanza, store.clone(), apns.clone()).await
             {
                 stream.write_all(response.as_bytes()).await?;
             }
@@ -116,11 +117,12 @@ async fn run_once(
 }
 
 async fn handle_stanza(
-    component_jid: &str,
+    config: &XmppComponentConfig,
     stanza: &str,
     store: Arc<PushRegistrationStore>,
     apns: Arc<ApnsPushClient>,
 ) -> Option<String> {
+    let component_jid = config.jid.as_str();
     let parsed = match ParsedIq::parse(stanza) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -141,7 +143,7 @@ async fn handle_stanza(
             Some(unregister_device_result(component_jid, &parsed, store).await)
         }
         IqKind::PubSubPublish { ref node } => {
-            Some(publish_result(component_jid, &parsed, node.as_str(), store, apns).await)
+            Some(publish_result(component_jid, &parsed, node.as_str(), store, apns, config).await)
         }
         IqKind::Unsupported => Some(error_result(
             component_jid,
@@ -221,21 +223,42 @@ async fn publish_result(
     node: &str,
     store: Arc<PushRegistrationStore>,
     apns: Arc<ApnsPushClient>,
+    config: &XmppComponentConfig,
 ) -> String {
     let Some(registration) = store.registration_for_node(node).await else {
         return error_result(component_jid, iq, "cancel", "item-not-found");
     };
 
+    if store
+        .sync_push_succeeded_recently(node, config.sync_min_interval)
+        .await
+    {
+        debug!(
+            owner = %registration.owner_jid,
+            provider = %registration.provider,
+            node = %registration.node,
+            min_interval_secs = config.sync_min_interval.as_secs(),
+            "suppressed duplicate XMPP sync push"
+        );
+        return empty_result(component_jid, iq);
+    }
+
     let target = ApnsPushTarget {
-        token_hex: registration.token_hex,
+        token_hex: registration.token_hex.clone(),
         environment: registration.environment,
     };
     match apns
-        .deliver_notification(target, TrixApnsNotificationPayload::default())
+        .deliver_wake(target, TrixApnsWakePayload::default())
         .await
     {
         Ok(ApnsDeliveryOutcome::Delivered) => {
             let _ = store.mark_success(node).await;
+            debug!(
+                owner = %registration.owner_jid,
+                provider = %registration.provider,
+                node = %registration.node,
+                "delivered XMPP sync push"
+            );
             empty_result(component_jid, iq)
         }
         Ok(ApnsDeliveryOutcome::Rejected {

@@ -284,10 +284,12 @@ ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
 APNs requests by itself. APNs signing is handled by the standalone
 `trix-push-gateway` binary. The gateway also has an XEP-0114
 component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
-node mappings outside the repo, and emits only the generic sync notification
-contract above. PushKit/VoIP tokens are registered separately with
-`apns-voip-sandbox` or `apns-voip-production`, stored under a distinct
-`trix-voip/` node namespace, and are not enabled for XEP-0357 sync publishes.
+node mappings outside the repo, and emits only silent background sync wakes for
+component publishes. The internal HTTP notification path remains constrained to
+the generic sync notification contract above. PushKit/VoIP tokens are registered
+separately with `apns-voip-sandbox` or `apns-voip-production`, stored under a
+distinct `trix-voip/` node namespace, and are not enabled for XEP-0357 sync
+publishes.
 
 The Apple client deliberately keeps its XEP-0352 Client State Indication
 push-eligible after APNs registration, even while the app scene is foregrounded.
@@ -314,9 +316,12 @@ message content; post-restart component publish smoke reached the gateway and
 returned APNs delivery success without registration failures. The same rollout
 later switched ejabberd `mod_push.notify_on` to `all` after real encrypted
 message sends did not trigger gateway publishes under the narrower `messages`
-mode. This may increase generic wake frequency, but the gateway payload remains
-plaintext-free and the Apple client still filters visible notification text
-locally.
+mode. This may increase generic wake frequency, but the gateway sends XEP-0357
+component publishes as silent APNs background wakes, keeps the payload
+plaintext-free, and leaves visible notification decisions to the Apple client
+after local sync. The push gateway also rate-limits XMPP component sync wakes
+per registration node with `TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS` so repeated
+generic publishes from `notify_on: all` do not churn Apple devices.
 
 ## Call Media Risk
 

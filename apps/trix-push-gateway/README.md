@@ -14,9 +14,11 @@ Current scope:
 - store separate VoIP PushKit tokens through the `apns-voip-sandbox` and
   `apns-voip-production` providers without enabling those tokens for XEP-0357
   sync notifications;
-- send only the Trix generic APNs notification payload: `aps.alert.title=Trix`,
-  `aps.alert.body=New encrypted message` or unread-count wording,
-  `aps.content-available=1`, and `trix.type=sync`;
+- send XEP-0357 component publishes as silent APNs background wakes:
+  `aps.content-available=1` and `trix.type=sync`;
+- keep the internal HTTP notification endpoint limited to the Trix generic APNs
+  alert payload: `aps.alert.title=Trix`, `aps.alert.body=New encrypted message`
+  or unread-count wording, `aps.content-available=1`, and `trix.type=sync`;
 - send only the Trix VoIP call payload through the separate APNs VoIP topic:
   `trix.call_id=<opaque-call-id>` and optional `trix.account`; no room, caller,
   LiveKit token, TURN credential, media key, or decrypted text is included;
@@ -27,7 +29,7 @@ Current scope:
 This binary is the APNs transport layer for the XMPP pivot. In component mode it
 advertises a `pubsub/push` identity, accepts Martin/Tigase `apns-sandbox` and
 `apns-production` device registration commands, returns a stable XEP-0357 node,
-and sends generic APNs notifications when ejabberd publishes to that node. The
+and sends silent APNs background wakes when ejabberd publishes to that node. The
 same private component accepts `apns-voip-sandbox` and `apns-voip-production`
 registration commands for PushKit tokens, but those nodes use the `trix-voip/`
 namespace and are only used by the internal call-push endpoint.
@@ -116,6 +118,10 @@ Before production startup, confirm all of the following:
   secrets: `TRIX_PUSH_GATEWAY_TOKEN` and `TRIX_XMPP_COMPONENT_SECRET`.
 - Gateway registration store path is persistent and host-private:
   `TRIX_PUSH_STORE_PATH` (default `/var/lib/trix-push-gateway/registrations.json`).
+- XMPP component sync pushes are rate-limited per registration node by
+  `TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS` (default `60`) because XEP-0357
+  publishes are generic sync wakes; repeated wakes inside this interval carry no
+  additional plaintext-free information and can otherwise churn Apple devices.
 - ejabberd is configured with private `ejabberd_service` listener and
   `mod_push` route to component JID `push.trix.selfhost.ru`.
 - Component network path is private (loopback or internal Docker network only):
@@ -153,4 +159,6 @@ APNs `.p8` key read-only from `/opt/trix-xmpp/certs/apns`, keeps the HTTP health
 endpoint on `127.0.0.1:8090`, and connects to ejabberd as
 `push.trix.selfhost.ru`. Signed macOS APNs smoke passed on 2026-05-20 with a
 visible generic push and no plaintext message, filename, or attachment metadata
-fields.
+fields. XEP-0357 component publishes now use silent background wakes; visible
+generic alerts remain limited to the internal HTTP notification path and any
+client-created local fallback after sync.

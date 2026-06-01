@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
+use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -184,6 +184,10 @@ fn xmpp_component_from_env() -> Result<Option<XmppComponentConfig>> {
             .context("invalid TRIX_XMPP_COMPONENT_PORT")?,
         jid,
         shared_secret,
+        sync_min_interval: Duration::from_secs(env_u64_or(
+            "TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS",
+            60,
+        )?),
     }))
 }
 
@@ -408,6 +412,13 @@ struct ErrorResponse {
 
 fn env_or(key: &str, default: &str) -> Result<String> {
     Ok(env::var(key).unwrap_or_else(|_| default.to_owned()))
+}
+
+fn env_u64_or(key: &str, default: u64) -> Result<u64> {
+    match env::var(key) {
+        Ok(value) => value.parse().with_context(|| format!("invalid {key}")),
+        Err(_) => Ok(default),
+    }
 }
 
 fn env_required(key: &str) -> Result<String> {
