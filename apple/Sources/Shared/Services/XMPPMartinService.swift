@@ -34,7 +34,7 @@ struct XMPPGroupMemberRefresh: Equatable, Sendable {
     let shouldReplaceCachedMembers: Bool
 }
 
-actor XMPPMartinService: TrixService {
+actor XMPPMartinService: TrixService, TrixReconnectService {
     private final class TrixMessageCaptureModule: XmppModuleBase, XmppModule {
         static let ID = "trix-message-capture"
 
@@ -1075,6 +1075,20 @@ actor XMPPMartinService: TrixService {
         }
 
         await sendClientState(isActive: isActive, connection: connection)
+    }
+
+    func disconnectForNetworkLoss(session: TrixSession) async {
+        let key = Self.sessionKey(session)
+        await connectionOpenGate.cancelValue(for: key)
+        guard let connection = connections.removeValue(forKey: key) else {
+            return
+        }
+
+        try? await connection.client.disconnect(force: true)
+    }
+
+    func reconnect(session: TrixSession) async throws {
+        _ = try await reconnect(for: session)
     }
 
     func rooms(session: TrixSession) async throws -> [TrixRoomSummary] {

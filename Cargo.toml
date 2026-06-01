@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/trix-admin-api",
     "apps/trix-call-control",
     "apps/trix-push-gateway",
     "crates/trix-push",

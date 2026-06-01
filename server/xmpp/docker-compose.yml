@@ -110,6 +110,35 @@ services:
       TRIX_CALL_PUSH_GATEWAY_URL: ${TRIX_CALL_PUSH_GATEWAY_URL:-http://push-gateway:8090/v0/apns/voip/call}
       TRIX_CALL_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-}
 
+  admin-api:
+    profiles:
+      - admin
+    build:
+      context: ${TRIX_ADMIN_API_BUILD_CONTEXT:-../..}
+      dockerfile: ${TRIX_ADMIN_API_DOCKERFILE:-Dockerfile}
+      args:
+        TRIX_BIN: trix-admin-api
+    depends_on:
+      - ejabberd
+    restart: unless-stopped
+    ports:
+      - "${TRIX_ADMIN_BIND:-127.0.0.1}:${TRIX_ADMIN_PORT:-8093}:8093"
+    environment:
+      TRIX_ADMIN_BIND_ADDR: 0.0.0.0:8093
+      TRIX_ADMIN_ALLOW_NON_LOOPBACK_BIND: "1"
+      TRIX_ADMIN_LOG: ${TRIX_ADMIN_LOG:-info,trix_admin_api=debug}
+      TRIX_ADMIN_API_TOKEN: ${TRIX_ADMIN_API_TOKEN:-}
+      TRIX_XMPP_API_URL: http://ejabberd:5280/api
+      TRIX_XMPP_HOST: ${TRIX_XMPP_HOST:-trix.selfhost.ru}
+      TRIX_PUSH_GATEWAY_URL: ${TRIX_PUSH_GATEWAY_URL:-http://push-gateway:8090}
+      TRIX_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-}
+      TRIX_ADMIN_UPLOAD_DIR: /var/lib/trix-admin-api/upload
+      TRIX_FEATURE_FLAGS_PATH: /var/lib/trix-admin-api/feature-flags.json
+      TRIX_ADMIN_AUDIT_LOG_PATH: /var/lib/trix-admin-api/audit.jsonl
+    volumes:
+      - admin-api-data:/var/lib/trix-admin-api
+      - ejabberd-upload:/var/lib/trix-admin-api/upload:ro
+
   prosody:
     profiles:
       - prosody-fallback
@@ -126,5 +155,6 @@ services:
 volumes:
   ejabberd-database:
   ejabberd-upload:
+  admin-api-data:
   push-gateway-data:
   prosody-data:

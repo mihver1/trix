@@ -52,6 +52,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
     sources:
+      - path: Sources/SharedFeatureFlags
       - path: Sources/Shared
       - path: Sources/iOS
     dependencies:
@@ -91,6 +92,7 @@ targets:
         NSCameraUsageDescription: Trix uses the camera for encrypted direct video calls.
         NSMicrophoneUsageDescription: Trix uses the microphone for encrypted direct and group voice calls.
     sources:
+      - path: Sources/SharedFeatureFlags
       - path: Sources/Shared
       - path: Sources/macOS
     dependencies:
@@ -112,6 +114,28 @@ targets:
           TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
         Release:
           TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production
+
+  TrixAdminMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    info:
+      path: Sources/Admin/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    sources:
+      - path: Sources/SharedFeatureFlags
+      - path: Sources/Admin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trix.admin
+        PRODUCT_NAME: Trix Admin
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: HGY33KYKQ2
 
   TrixMatrixMacTests:
     type: bundle.unit-test

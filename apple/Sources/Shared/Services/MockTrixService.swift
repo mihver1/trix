@@ -20,8 +20,9 @@ actor MockTrixService: TrixService {
     private var typingUserIDsByRoomID: [String: [String]]
     private var callDescriptorsByRoomID: [String: [TrixReceivedCallDescriptor]]
     private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState]
+    private var restoreError: TrixClientError?
 
-    init(now: Date = Date()) {
+    init(now: Date = Date(), restoreError: TrixClientError? = nil) {
         let directRoom = TrixRoomSummary(
             id: "!dm-alice:trix.selfhost.ru",
             name: "Alice",
@@ -77,6 +78,7 @@ actor MockTrixService: TrixService {
         self.typingUserIDsByRoomID = [:]
         self.callDescriptorsByRoomID = [:]
         self.readMarkersByRoomAndUserID = [:]
+        self.restoreError = restoreError
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
             "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
@@ -189,6 +191,10 @@ actor MockTrixService: TrixService {
     }
 
     func restore(session: TrixSession) async throws -> TrixAccount {
+        if let restoreError {
+            throw restoreError
+        }
+
         let profile = profilesByUserID[session.userID.lowercased()]
         return TrixAccount(
             userID: session.userID,

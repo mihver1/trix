@@ -34,6 +34,10 @@ committed.
 - `scripts/operator-api-smoke.sh`: localhost `mod_http_api` provision,
   reset-password, directory search, health, disable, enable, and cleanup smoke
   with generated disposable credentials.
+- `scripts/admin-api-smoke.sh`: loopback `trix-admin-api` smoke for admin auth,
+  user management through a temporary fake ejabberd API, feature flags, audit
+  events, media storage, metrics, logs, and the test-push dependency gate
+  without real APNs or ejabberd credentials.
 - `scripts/invite-registration-server.py`: small app-facing wrapper for invite
   registration, account password changes, and Telegram sticker-pack import.
   Operator invite creation is bearer-protected, invite codes are stored only as
@@ -47,6 +51,9 @@ committed.
   upload-volume archive.
 - `livekit.yaml.example`: copy to `livekit.yaml` for the private LiveKit SFU.
 - `turnserver.conf.example`: copy to `turnserver.conf` for coturn STUN/TURN.
+- `../../apps/trix-admin-api`: authenticated loopback admin API for the native
+  macOS admin app. It wraps ejabberd user operations, push test requests, media
+  storage status, logs/metrics summaries, and feature-flag storage.
 
 ## Default: ejabberd
 
@@ -237,6 +244,43 @@ both the ejabberd container user and coturn container group can read it; ejabber
 uses `certs/*.pem`, so making the key readable only by coturn causes an XMPP
 restart loop. `turns:trix.selfhost.ru:5349` was reachable again. UDP TURN on
 `3478` is still the path proven by the echo-assistant smoke.
+
+## Admin App Backend
+
+The native macOS admin app uses `trix-admin-api`, not raw ejabberd `5280`.
+Start it only on loopback:
+
+```bash
+cd server/xmpp
+TRIX_ADMIN_API_TOKEN="$(openssl rand -hex 32)" \
+podman compose --profile admin up -d admin-api
+```
+
+The API binds to `127.0.0.1:8093` on the host by default and checks
+`Authorization: Bearer <TRIX_ADMIN_API_TOKEN>` for every `/v1/admin/*` route.
+The token must be deployment-local, non-default, and at least 32 bytes.
+For remote use, prefer an SSH tunnel to the VPS loopback port rather than a
+public reverse-proxy route. The unauthenticated `/v1/feature-flags/snapshot`
+route is client-visible configuration only; do not store secrets, credentials,
+entitlements, or security decisions in feature flags.
+The standalone binary refuses non-loopback binds and non-private upstream URLs
+unless an explicit deployment override is set; Compose grants the container-only
+bind override while keeping the host publish loopback-bound.
+Mutating admin routes append secret-safe audit events to
+`TRIX_ADMIN_AUDIT_LOG_PATH`, defaulting to
+`/var/lib/trix-admin-api/audit.jsonl`.
+
+For local code changes, run the self-contained admin API smoke from the repo
+root. It builds the debug binary, starts a disposable loopback instance, writes
+temporary fake ejabberd, feature-flag/audit/media/log fixtures, and prints only
+scrubbed status lines:
+
+```bash
+server/xmpp/scripts/admin-api-smoke.sh
+```
+
+See `../../docs/admin-app.md` and `../../docs/feature-flags.md` for the operator
+and feature-flag workflows.
 
 ## Prosody Fallback
 

@@ -307,6 +307,12 @@ delivery success for a generic sync wake, and QA confirmed the visible
 notification remained generic with no plaintext message, filename, media-key, or
 decrypted-content fields.
 
+On 2026-06-01 the live VPS enabled ejabberd `mod_push_keepalive` with explicit
+stream-management ACK/resume timeouts. This keeps disconnected push-enabled
+sessions eligible for XEP-0357 wakeups without exposing APNs tokens or decrypted
+message content; post-restart component publish smoke reached the gateway and
+returned APNs delivery success without registration failures.
+
 ## Call Media Risk
 
 Calls add metadata beyond message delivery: active call IDs, LiveKit room IDs,
@@ -384,6 +390,20 @@ passwords, disable accounts with `ban_account`, re-enable them with
 archive/upload/push health through loopback-only calls. It is not a public or
 client-facing API and must not be exposed directly outside the host. Passwords
 are read from local files and must not be logged.
+
+The checked-in `trix-admin-api` service is the first native admin-app backend.
+It must stay loopback-first, require `TRIX_ADMIN_API_TOKEN` for every
+`/v1/admin/*` route, reject default or short tokens, and wrap
+ejabberd/push/media/log/feature-flag operations without returning credentials or
+decrypted content. Remote use should prefer an SSH tunnel to
+`127.0.0.1:8093`; exposing `/v1/admin/*` through nginx requires a separate
+review. The standalone binary refuses non-loopback binds and non-private
+upstream URLs unless an explicit deployment override is set. The client-visible
+`/v1/feature-flags/snapshot` route is configuration only. Feature flags must not
+contain passwords, bearer tokens, APNs material, TURN credentials, OMEMO state,
+media keys, private URLs, or security-bypass decisions. Mutating admin routes
+write JSONL audit events to `TRIX_ADMIN_AUDIT_LOG_PATH`; those events may
+include operator id, action name, safe target, outcome, and redacted detail only.
 
 The checked-in invite-registration wrapper is the first app-facing account
 bootstrap path. It keeps invite codes single-use, stores only code hashes plus

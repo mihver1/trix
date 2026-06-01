@@ -167,10 +167,17 @@ modules:
     include_body: false
     include_sender: false
     notify_on: messages
+  mod_push_keepalive:
+    resume_timeout: 72 hours
+    wake_on_start: false
+    wake_on_timeout: true
   mod_roster:
     versioning: true
   mod_stream_mgmt:
+    ack_timeout: 1 min
+    max_resume_timeout: 1 hour
     resend_on_timeout: if_offline
+    resume_timeout: 5 min
   mod_vcard:
     search: true
     hosts:

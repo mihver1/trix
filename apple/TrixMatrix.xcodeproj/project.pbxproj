@@ -36,6 +36,7 @@
 		2C864C141108F66ABE20BA07 /* RoomListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C2D59E85DDAC36B739AA246 /* RoomListViewModelTests.swift */; };
 		2E096CB7AF402E547D5F3F6E /* TrixUserDirectorySearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43722B0DE18EF6D1CA3D68AE /* TrixUserDirectorySearchViewModel.swift */; };
 		2E8181505E263CC7A7991096 /* TrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B35075275B150F3A4E508B /* TrixRootView.swift */; };
+		3265DD845844A8AB2355C9C8 /* TrixFeatureFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = D21E70CBBF2AB9DB0E631987 /* TrixFeatureFlags.swift */; };
 		32F7131F833CF232EBFBE76B /* TrixInlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 337251558054A82A81447617 /* TrixInlineAttachmentPreview.swift */; };
 		32F91A6BB53915F3B4029635 /* TrixCallModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A05325B755D712A33CBE32F /* TrixCallModels.swift */; };
 		33F1238EFAB601B751155EBF /* TrixInlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 337251558054A82A81447617 /* TrixInlineAttachmentPreview.swift */; };
@@ -62,6 +63,7 @@
 		5BCD889F6C600AFC151E706F /* MartinOMEMO in Frameworks */ = {isa = PBXBuildFile; productRef = 7BF98DD511834ED334A9B210 /* MartinOMEMO */; };
 		5E770BB2E1B1AC1BA338F71B /* TrixCallModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A05325B755D712A33CBE32F /* TrixCallModels.swift */; };
 		5E8428C7C3A98FDACAF74130 /* TrixCallAudioLevelRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87107FE8B5A1DB883FA13651 /* TrixCallAudioLevelRegistry.swift */; };
+		606651859245DAAC6EFB6363 /* TrixAdminApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8CB581634E119AACB67E300 /* TrixAdminApp.swift */; };
 		67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		6D3ADB1DE9BA846DCE0F6CF1 /* TrixPasswordChangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47369C50BE6121D347C0CB7C /* TrixPasswordChangeView.swift */; };
 		6D57E5D1FCB8F27CE604807D /* TimelineViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */; };
@@ -77,11 +79,14 @@
 		7F7FAB7503B931E6D188545F /* TrixRoomSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A96ED103808B7E771FFC5BA /* TrixRoomSearchView.swift */; };
 		807543063C7A8EC6639E1D70 /* Martin in Frameworks */ = {isa = PBXBuildFile; productRef = AF0FA74A744B2E98E20D8738 /* Martin */; };
 		807A17F604336D66B054C512 /* TrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4219A1C95F0801F8E69645E1 /* TrixLimitationsView.swift */; };
+		83864857F2C18DB0B27722B2 /* TrixFeatureFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = D21E70CBBF2AB9DB0E631987 /* TrixFeatureFlags.swift */; };
 		86DE06F00D3EEF89A9087A6C /* TrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */; };
 		86F51D72617511B1F9899F66 /* TrixGroupRoomCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CDAECFDAFCD702E0D47C71 /* TrixGroupRoomCacheStore.swift */; };
 		87E5890B64EEAC1CDDD7D6F5 /* TrixLocalProfileConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A7BE83B98922A490891F0E7 /* TrixLocalProfileConfigurationTests.swift */; };
 		8BB219AB2BDA97EBEBD0A136 /* TrixRoomSummaryCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */; };
 		8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
+		8DF16EEFAFED980624B64EC1 /* TrixAdminViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D03FB2B31E006C19FCD28C6 /* TrixAdminViews.swift */; };
+		8ED2D90D9E34377C0DE6FCA7 /* TrixAdminAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCE53F11CF091DC0AB34F5BE /* TrixAdminAppModel.swift */; };
 		907B1EA79B4C0EF1F64763FD /* XMPPMartinService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521137CC0E9C946883248810 /* XMPPMartinService.swift */; };
 		921F0FC41786273D87813408 /* TrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */; };
 		936A4296DD7D9C7CFA5DE5D2 /* TrixRoomSummaryCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */; };
@@ -105,6 +110,7 @@
 		ABC0CF7E53A612FCE6EC9099 /* TrixMediaCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6F98B5C2FA3DC9E57182A1 /* TrixMediaCacheTests.swift */; };
 		B12D38D695C0CC7E8A1D0889 /* TrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A160B4F983AE22D5C8286DA /* TrixRoomListView.swift */; };
 		B5C417A232F5ACC6D379926C /* TrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4219A1C95F0801F8E69645E1 /* TrixLimitationsView.swift */; };
+		B7D23886C79D10FD3ABF70C9 /* TrixFeatureFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = D21E70CBBF2AB9DB0E631987 /* TrixFeatureFlags.swift */; };
 		B810FC6FE7BB3C2EB1FC3499 /* TrixUserDirectorySearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43722B0DE18EF6D1CA3D68AE /* TrixUserDirectorySearchViewModel.swift */; };
 		B87D22C877BCEABC1A6BCE4B /* TrixGroupMembersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 218F41815711F48C162BEE1D /* TrixGroupMembersView.swift */; };
 		C047D486EA323DB75611B0BD /* TrixVisualDeviceVerificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B10D324394A6B45839BBBD3 /* TrixVisualDeviceVerificationView.swift */; };
@@ -116,6 +122,7 @@
 		C9E2327848E3A5984D7E59EA /* TrixCallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C55AF2D362784B83513DC12 /* TrixCallTests.swift */; };
 		C9F9EB8155DE3ACB6E18485D /* TrixCallViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5BE98838A69C7B3AF91B5D8 /* TrixCallViewModel.swift */; };
 		CC3ED96142CA73D1EBE3A737 /* TrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB7E28D9BE26DFDDF515848 /* TrixNewRoomView.swift */; };
+		CC41FC4CB5C5D1D741BF89C1 /* TrixAdminAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03EF6A93D17A0AABF2404343 /* TrixAdminAPIClient.swift */; };
 		CDF9E3EA955B8A666B9A1C57 /* TrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67180EC5D24D5F68AF4BF21D /* TrixClientConfiguration.swift */; };
 		CE7C59BA16D194F84A8F1B9E /* DeviceVerificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */; };
 		CFD02B00A99A6EB28089E5A7 /* TrixStickerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E361322ECEB6552681FC51E /* TrixStickerTests.swift */; };
@@ -133,6 +140,7 @@
 		EBF3BCA0A5E868E1D6BCCDAD /* TrixInviteIssueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42A6621D0BCD3B821EE035A /* TrixInviteIssueView.swift */; };
 		F3F274998D0C678FF257685F /* XMPPMartinService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521137CC0E9C946883248810 /* XMPPMartinService.swift */; };
 		F58ACD874ECEDCFDFD4CBE82 /* TrixGroupRoomCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CDAECFDAFCD702E0D47C71 /* TrixGroupRoomCacheStore.swift */; };
+		F5B4F7E895C61C8E58E389BE /* TrixFeatureFlagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81287C46833C967224CB0DB1 /* TrixFeatureFlagTests.swift */; };
 		FA3F50BDA5FE5D2C7FD89DFF /* TrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ACD907EF405BB7A2E6AB546 /* TrixLoginView.swift */; };
 		FD0EC43DBFF61699A9B02DF9 /* TrixRoomNotificationProfileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7CF1DF531A65A029544C320 /* TrixRoomNotificationProfileTests.swift */; };
 		FF9932E70FC1B6D7BCE2CA2C /* TrixProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B64629B678C5260EB80FFD28 /* TrixProfileViewModel.swift */; };
@@ -150,9 +158,11 @@
 
 /* Begin PBXFileReference section */
 		02BCE498CC4406155DBFAF50 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		03EF6A93D17A0AABF2404343 /* TrixAdminAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAdminAPIClient.swift; sourceTree = "<group>"; };
 		056CC95719A07BAA289FCB0E /* TrixAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAppModel.swift; sourceTree = "<group>"; };
 		08BCE490548975D7FE32CBD6 /* TrixGroupMemberRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixGroupMemberRefreshTests.swift; sourceTree = "<group>"; };
 		0A20B3F32A750F95F1336243 /* TrixStickerImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixStickerImportService.swift; sourceTree = "<group>"; };
+		0D03FB2B31E006C19FCD28C6 /* TrixAdminViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAdminViews.swift; sourceTree = "<group>"; };
 		0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUserDirectoryPickerView.swift; sourceTree = "<group>"; };
 		0E361322ECEB6552681FC51E /* TrixStickerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixStickerTests.swift; sourceTree = "<group>"; };
 		1ACD907EF405BB7A2E6AB546 /* TrixLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixLoginView.swift; sourceTree = "<group>"; };
@@ -186,6 +196,7 @@
 		6B6F98B5C2FA3DC9E57182A1 /* TrixMediaCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMediaCacheTests.swift; sourceTree = "<group>"; };
 		76007C8FD94C5E153E5834F0 /* TrixInviteRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixInviteRegistrationService.swift; sourceTree = "<group>"; };
 		7C66806692BC72BF8057298D /* TrixGroupControlPlaneService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixGroupControlPlaneService.swift; sourceTree = "<group>"; };
+		81287C46833C967224CB0DB1 /* TrixFeatureFlagTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixFeatureFlagTests.swift; sourceTree = "<group>"; };
 		847B59FABE7AF1544B501953 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
 		8574C00F06FC7D1AECD79E07 /* TrixAsyncOperationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAsyncOperationGateTests.swift; sourceTree = "<group>"; };
 		8682262FABE4A23051A6161F /* TrixMatrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixMatrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -202,6 +213,7 @@
 		982CA9963B78FB1D985AB7DD /* KeychainTrixSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTrixSessionStore.swift; sourceTree = "<group>"; };
 		A2B35075275B150F3A4E508B /* TrixRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRootView.swift; sourceTree = "<group>"; };
 		A406E30E28EA61CB8EFF1247 /* TrixMacAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacAppDelegate.swift; sourceTree = "<group>"; };
+		A424B363E48C361CEDFAB166 /* TrixAdminMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrixAdminMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A6CDAECFDAFCD702E0D47C71 /* TrixGroupRoomCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixGroupRoomCacheStore.swift; sourceTree = "<group>"; };
 		A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVerificationViewModel.swift; sourceTree = "<group>"; };
 		A9CD022B1BE00F3C65E90173 /* TrixProfileSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixProfileSettingsView.swift; sourceTree = "<group>"; };
@@ -210,15 +222,19 @@
 		B42A6621D0BCD3B821EE035A /* TrixInviteIssueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixInviteIssueView.swift; sourceTree = "<group>"; };
 		B64629B678C5260EB80FFD28 /* TrixProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixProfileViewModel.swift; sourceTree = "<group>"; };
 		B7CF1DF531A65A029544C320 /* TrixRoomNotificationProfileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRoomNotificationProfileTests.swift; sourceTree = "<group>"; };
+		BCE53F11CF091DC0AB34F5BE /* TrixAdminAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAdminAppModel.swift; sourceTree = "<group>"; };
 		BDE01C9A8C8C99AC84A51058 /* TrixCallVideoStageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCallVideoStageView.swift; sourceTree = "<group>"; };
 		C2B6FAE75BED0075E8E87A13 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixOMEMOStore.swift; sourceTree = "<group>"; };
 		CC15B39FB4918244CEFD2071 /* TrixAsyncOperationGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAsyncOperationGate.swift; sourceTree = "<group>"; };
 		D11721CE5ADE58480164002B /* TrixCallServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCallServices.swift; sourceTree = "<group>"; };
+		D21E70CBBF2AB9DB0E631987 /* TrixFeatureFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixFeatureFlags.swift; sourceTree = "<group>"; };
+		D8CB581634E119AACB67E300 /* TrixAdminApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAdminApp.swift; sourceTree = "<group>"; };
 		DA99539538D3795920A792CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E40B7B73F121759083185AE2 /* MockTrixServiceGroupLeaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTrixServiceGroupLeaveTests.swift; sourceTree = "<group>"; };
 		E9C684C0F74E6B343975F161 /* TrixMediaCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMediaCacheStore.swift; sourceTree = "<group>"; };
 		E9F6EEF889A5560D0EDF1503 /* TrixModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixModels.swift; sourceTree = "<group>"; };
+		EC66C67039D6021BBECC42C5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EDAB7547FCC71382F1D4B836 /* TrixiOSAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSAppDelegate.swift; sourceTree = "<group>"; };
 		EE82DADDEFD49DFCE533A797 /* TrixUIPrimitives.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUIPrimitives.swift; sourceTree = "<group>"; };
 		EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
@@ -261,6 +277,7 @@
 				EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */,
 				8574C00F06FC7D1AECD79E07 /* TrixAsyncOperationGateTests.swift */,
 				1C55AF2D362784B83513DC12 /* TrixCallTests.swift */,
+				81287C46833C967224CB0DB1 /* TrixFeatureFlagTests.swift */,
 				4F11C27C439F14606E79D7EA /* TrixGroupLeaveOperationTests.swift */,
 				08BCE490548975D7FE32CBD6 /* TrixGroupMemberRefreshTests.swift */,
 				8A7BE83B98922A490891F0E7 /* TrixLocalProfileConfigurationTests.swift */,
@@ -289,6 +306,7 @@
 		25FE97757ABAA8D70924A157 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				A424B363E48C361CEDFAB166 /* TrixAdminMac.app */,
 				8682262FABE4A23051A6161F /* TrixMatrixiOS.app */,
 				508D5313FCF6542829A02D00 /* TrixMatrixMac.app */,
 				B071C2A1F4524EC903F3B000 /* TrixMatrixMacTests.xctest */,
@@ -309,12 +327,23 @@
 		270641E14C6A7ABCC5C3969D = {
 			isa = PBXGroup;
 			children = (
+				436927EE9DCE120E4BDF700E /* Admin */,
 				E1614ACD5BF88F040D145BF4 /* iOS */,
 				0CFC0196CD51203AE7CB57E2 /* macOS */,
 				7DE6BC0DF99035EE8E0C7787 /* Shared */,
 				02B6E2ED9762411B61972286 /* Shared */,
+				297FD7D719564EFDC8AF84B8 /* SharedFeatureFlags */,
 				25FE97757ABAA8D70924A157 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		297FD7D719564EFDC8AF84B8 /* SharedFeatureFlags */ = {
+			isa = PBXGroup;
+			children = (
+				D21E70CBBF2AB9DB0E631987 /* TrixFeatureFlags.swift */,
+			);
+			name = SharedFeatureFlags;
+			path = Sources/SharedFeatureFlags;
 			sourceTree = "<group>";
 		};
 		3C3D6A2CC3483E3B08B2801D /* App */ = {
@@ -328,6 +357,19 @@
 				61B76AE4B7FE38684FD69E3F /* XMPPLiveSmokeRunner.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		436927EE9DCE120E4BDF700E /* Admin */ = {
+			isa = PBXGroup;
+			children = (
+				EC66C67039D6021BBECC42C5 /* Info.plist */,
+				03EF6A93D17A0AABF2404343 /* TrixAdminAPIClient.swift */,
+				D8CB581634E119AACB67E300 /* TrixAdminApp.swift */,
+				BCE53F11CF091DC0AB34F5BE /* TrixAdminAppModel.swift */,
+				0D03FB2B31E006C19FCD28C6 /* TrixAdminViews.swift */,
+			);
+			name = Admin;
+			path = Sources/Admin;
 			sourceTree = "<group>";
 		};
 		7DE6BC0DF99035EE8E0C7787 /* Shared */ = {
@@ -456,6 +498,23 @@
 			productReference = B071C2A1F4524EC903F3B000 /* TrixMatrixMacTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		1E985C4923A84AFAEF6B9AB4 /* TrixAdminMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBCB843E5529406431201C59 /* Build configuration list for PBXNativeTarget "TrixAdminMac" */;
+			buildPhases = (
+				31213A39F805C78E46F30B24 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrixAdminMac;
+			packageProductDependencies = (
+			);
+			productName = TrixAdminMac;
+			productReference = A424B363E48C361CEDFAB166 /* TrixAdminMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 		ACF6312FAACCD1BC6923563C /* TrixMatrixiOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 26F4A14AB66F259065D8BA44 /* Build configuration list for PBXNativeTarget "TrixMatrixiOS" */;
@@ -509,6 +568,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					1E985C4923A84AFAEF6B9AB4 = {
+						DevelopmentTeam = HGY33KYKQ2;
+						ProvisioningStyle = Automatic;
+					};
 					ACF6312FAACCD1BC6923563C = {
 						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
@@ -538,6 +601,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				1E985C4923A84AFAEF6B9AB4 /* TrixAdminMac */,
 				F80150C1565CC5EBAFD2BBA8 /* TrixMatrixMac */,
 				10C29854EDE2CDFE7C5F688C /* TrixMatrixMacTests */,
 				ACF6312FAACCD1BC6923563C /* TrixMatrixiOS */,
@@ -565,6 +629,18 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		31213A39F805C78E46F30B24 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC41FC4CB5C5D1D741BF89C1 /* TrixAdminAPIClient.swift in Sources */,
+				606651859245DAAC6EFB6363 /* TrixAdminApp.swift in Sources */,
+				8ED2D90D9E34377C0DE6FCA7 /* TrixAdminAppModel.swift in Sources */,
+				8DF16EEFAFED980624B64EC1 /* TrixAdminViews.swift in Sources */,
+				3265DD845844A8AB2355C9C8 /* TrixFeatureFlags.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3F615A0B80C76355D35FE151 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -584,6 +660,7 @@
 				39A52996264B32B6004BE4D8 /* TrixCallVideoStageView.swift in Sources */,
 				D996A9F301683535BCFCBD16 /* TrixCallViewModel.swift in Sources */,
 				CDF9E3EA955B8A666B9A1C57 /* TrixClientConfiguration.swift in Sources */,
+				B7D23886C79D10FD3ABF70C9 /* TrixFeatureFlags.swift in Sources */,
 				294B5E2CCAE45FF18851E7E9 /* TrixForegroundCallRinger.swift in Sources */,
 				97317C8F64DD6473CAC8310B /* TrixGroupControlPlaneService.swift in Sources */,
 				B87D22C877BCEABC1A6BCE4B /* TrixGroupMembersView.swift in Sources */,
@@ -645,6 +722,7 @@
 				E2188B4431C52FFB67E0ED8B /* TrixCallVideoStageView.swift in Sources */,
 				C9F9EB8155DE3ACB6E18485D /* TrixCallViewModel.swift in Sources */,
 				C5CF66A5F802952DBBF72685 /* TrixClientConfiguration.swift in Sources */,
+				83864857F2C18DB0B27722B2 /* TrixFeatureFlags.swift in Sources */,
 				0171CF30C94747FC00C27217 /* TrixForegroundCallRinger.swift in Sources */,
 				7A8871B061CDDC98E74606F9 /* TrixGroupControlPlaneService.swift in Sources */,
 				7D85CCEF802178C7561426E1 /* TrixGroupMembersView.swift in Sources */,
@@ -697,6 +775,7 @@
 				6D57E5D1FCB8F27CE604807D /* TimelineViewModelTests.swift in Sources */,
 				A693C70D9209B1B0562E0585 /* TrixAsyncOperationGateTests.swift in Sources */,
 				C9E2327848E3A5984D7E59EA /* TrixCallTests.swift in Sources */,
+				F5B4F7E895C61C8E58E389BE /* TrixFeatureFlagTests.swift in Sources */,
 				A3D50C95ED357D9BA4392032 /* TrixGroupLeaveOperationTests.swift in Sources */,
 				A1DBA354D126E63ED5EB04F6 /* TrixGroupMemberRefreshTests.swift in Sources */,
 				87E5890B64EEAC1CDDD7D6F5 /* TrixLocalProfileConfigurationTests.swift in Sources */,
@@ -718,6 +797,25 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		0ECCBEA8B025C93CF9DFF068 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
+				INFOPLIST_FILE = Sources/Admin/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trix.admin;
+				PRODUCT_NAME = "Trix Admin";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
 		26AAA4643A954762B28ACB83 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -840,6 +938,25 @@
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
+		};
+		63BBB84BDCFBC0CED6AC9AA0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
+				INFOPLIST_FILE = Sources/Admin/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trix.admin;
+				PRODUCT_NAME = "Trix Admin";
+				SDKROOT = macosx;
+			};
+			name = Debug;
 		};
 		908BFA39998A9BA419BABA62 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -996,6 +1113,15 @@
 			buildConfigurations = (
 				26AAA4643A954762B28ACB83 /* Debug */,
 				45F099C27C9AAC1BA3098098 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EBCB843E5529406431201C59 /* Build configuration list for PBXNativeTarget "TrixAdminMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				63BBB84BDCFBC0CED6AC9AA0 /* Debug */,
+				0ECCBEA8B025C93CF9DFF068 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

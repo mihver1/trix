@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 struct TrixStartupStatus: Equatable {
     let step: String
@@ -81,12 +82,16 @@ final class TrixAppModel: ObservableObject {
     private let mediaCacheSettingsStore: TrixMediaCacheSettingsStore
     private let roomNotificationProfileStore: TrixRoomNotificationProfileStore
     private let trixService: TrixService
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "TrixNetworkMonitor")
     private var stickerAssetDataByID: [String: Data] = [:]
     private var apnsDeviceToken: TrixAPNsDeviceToken?
     private var voipDeviceToken: TrixVoIPDeviceToken?
     private var roomNotificationProfileSnapshot = TrixRoomNotificationProfileSnapshot.empty
     private var hasStarted = false
     private var applicationIsActive = false
+    private var networkWasSatisfied: Bool?
+    private var networkRecoveryTask: Task<Void, Never>?
     private let foregroundRefreshInterval: Duration = .seconds(10)
 
     init(
@@ -112,6 +117,7 @@ final class TrixAppModel: ObservableObject {
         self.timelineViewModel = TimelineViewModel()
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
         self.callViewModel = TrixCallViewModel(callDescriptorService: trixService)
+        startNetworkMonitor()
     }
 
     var isAuthenticated: Bool {
@@ -143,6 +149,7 @@ final class TrixAppModel: ObservableObject {
         isStarting = true
         startupStatus = .checkingSavedSession
 
+        var savedSessionForRetry: TrixSession?
         do {
             guard let restoredSession = try sessionStore.loadSession() else {
                 isStarting = false
@@ -150,6 +157,7 @@ final class TrixAppModel: ObservableObject {
                 return
             }
 
+            savedSessionForRetry = restoredSession
             startupStatus = .openingXMPPSession(host: Self.startupHostDescription(from: restoredSession))
             let restoredAccount = try await trixService.restore(session: restoredSession)
             session = restoredSession
@@ -166,12 +174,131 @@ final class TrixAppModel: ObservableObject {
                 await self?.finishSessionRestoreInBackground()
             }
         } catch {
+            if let savedSessionForRetry,
+               Self.shouldPreserveSavedSessionAfterRestoreError(error) {
+                await preserveSessionAfterTransientRestoreFailure(savedSessionForRetry, error: error)
+                return
+            }
+
             startupStatus = .restoreFailed
             isStarting = false
             clearAuthenticatedState()
             try? sessionStore.clearSession()
             errorMessage = error.trixUserFacingMessage
         }
+    }
+
+    private func startNetworkMonitor() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let isSatisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                await self?.handleNetworkAvailabilityChange(isSatisfied: isSatisfied)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+    }
+
+    private func handleNetworkAvailabilityChange(isSatisfied: Bool) async {
+        let wasSatisfied = networkWasSatisfied
+        networkWasSatisfied = isSatisfied
+
+        guard let session,
+              !isLoggingOut,
+              let reconnectService = trixService as? any TrixReconnectService else {
+            return
+        }
+
+        if !isSatisfied {
+            networkRecoveryTask?.cancel()
+            await reconnectService.disconnectForNetworkLoss(session: session)
+            return
+        }
+
+        guard wasSatisfied == false else {
+            return
+        }
+
+        networkRecoveryTask?.cancel()
+        networkRecoveryTask = Task { @MainActor [weak self] in
+            await self?.recoverConnectionAfterNetworkRestored()
+        }
+    }
+
+    private func recoverConnectionAfterNetworkRestored() async {
+        guard let session,
+              !isLoggingOut else {
+            return
+        }
+
+        if let reconnectService = trixService as? any TrixReconnectService {
+            do {
+                try await reconnectService.reconnect(session: session)
+                errorMessage = nil
+            } catch {
+                errorMessage = error.trixUserFacingMessage
+                return
+            }
+        }
+
+        await refreshForeground(
+            markSelectedRoomRead: false,
+            reloadSelectedTimeline: applicationIsActive,
+            reportingCallStateErrors: true
+        )
+        await syncRoomNotificationProfilesFromServerIfPossible(for: session)
+        await syncAPNsRegistrationIfPossible()
+        await syncVoIPPushRegistrationIfPossible()
+    }
+
+    private func preserveSessionAfterTransientRestoreFailure(_ restoredSession: TrixSession, error: Error) async {
+        session = restoredSession
+        account = Self.fallbackAccount(from: restoredSession)
+        startupStatus = .finishingRestore
+
+        loadStickerLibrary(for: restoredSession.userID)
+        refreshLocalMediaState(for: restoredSession.userID)
+        loadRoomNotificationProfiles(for: restoredSession.userID)
+        await loadCachedRoomsForCurrentSession()
+
+        isStarting = false
+        errorMessage = error.trixUserFacingMessage
+    }
+
+    private static func fallbackAccount(from session: TrixSession) -> TrixAccount {
+        TrixAccount(
+            userID: session.userID,
+            displayName: fallbackDisplayName(from: session.userID),
+            deviceID: session.deviceID
+        )
+    }
+
+    private static func fallbackDisplayName(from userID: String) -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("@") {
+            return trimmed
+                .dropFirst()
+                .split(separator: ":")
+                .first
+                .map { String($0).capitalized } ?? trimmed
+        }
+
+        return trimmed
+            .split(separator: "@")
+            .first
+            .map { String($0).capitalized } ?? trimmed
+    }
+
+    private static func shouldPreserveSavedSessionAfterRestoreError(_ error: Error) -> Bool {
+        if let clientError = error as? TrixClientError {
+            switch clientError {
+            case .xmppConnectionFailed:
+                return true
+            default:
+                return false
+            }
+        }
+
+        return (error as NSError).domain == NSURLErrorDomain
     }
 
     private static func startupHostDescription(from session: TrixSession) -> String {

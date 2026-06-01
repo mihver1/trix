@@ -4,6 +4,34 @@ import XCTest
 
 final class MockTrixServiceGroupLeaveTests: XCTestCase {
     @MainActor
+    func testStartKeepsSavedSessionWhenRestoreConnectionFails() async throws {
+        let session = TrixSession(
+            userID: "@me:trix.selfhost.ru",
+            deviceID: "TEST-DEVICE",
+            homeserverURL: XMPPClientConfiguration.connectionURL,
+            accessToken: "test-password",
+            refreshToken: nil,
+            oidcData: nil,
+            sdkStoreID: "test-store",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let sessionStore = ReconnectTestSessionStore(session: session)
+        let model = TrixAppModel(
+            sessionStore: sessionStore,
+            registrationService: MockInviteRegistrationService(),
+            trixService: MockTrixService(restoreError: .xmppConnectionFailed)
+        )
+
+        await model.start()
+
+        XCTAssertEqual(model.session, session)
+        XCTAssertEqual(model.account, TrixAccount(userID: session.userID, displayName: "Me", deviceID: session.deviceID))
+        XCTAssertFalse(sessionStore.didClearSession)
+        XCTAssertFalse(model.roomListViewModel.rooms.isEmpty)
+        XCTAssertEqual(model.errorMessage, TrixClientError.xmppConnectionFailed.trixUserFacingMessage)
+    }
+
+    @MainActor
     func testLeaveGroupClearsSelectedGroupAfterServerSuccess() async throws {
         let service = MockTrixService()
         let model = TrixAppModel(
@@ -70,6 +98,26 @@ final class MockTrixServiceGroupLeaveTests: XCTestCase {
         } catch TrixClientError.roomUnavailable {
             // Expected.
         }
+    }
+}
+
+private final class ReconnectTestSessionStore: TrixSessionStore {
+    private let storedSession: TrixSession
+    private(set) var didClearSession = false
+
+    init(session: TrixSession) {
+        self.storedSession = session
+    }
+
+    func loadSession() throws -> TrixSession? {
+        storedSession
+    }
+
+    func saveSession(_ session: TrixSession) throws {
+    }
+
+    func clearSession() throws {
+        didClearSession = true
     }
 }
 

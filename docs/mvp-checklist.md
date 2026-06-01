@@ -111,7 +111,11 @@ copying old implementation details.
       confirmed the visible macOS notification showed title `Trix`, body
       `New encrypted message`, timestamp-only extra text, and no plaintext
       message, filename, attachment metadata, media key, token, credential, or
-      decrypted-content fields.
+      decrypted-content fields. On 2026-06-01 the live VPS enabled
+      `mod_push_keepalive` plus explicit stream-management ACK/resume timeouts
+      so disconnected push-enabled sessions are kept eligible for XEP-0357
+      wakeups; post-restart component publish smoke updated the gateway store
+      with APNs delivery success and no failures.
 - [ ] Encrypted calls. The first checked-in slice adds the LiveKit/coturn media
       deployment profile, `trix-call-control`, Apple call descriptors,
       `TrixCallControlService`, `TrixMediaCallService`, LiveKit Swift dependency,
@@ -414,6 +418,14 @@ copying old implementation details.
       archive-upload-push-health`, which reports loopback API status, backup
       archive presence, HTTP upload reachability, and push-gateway reachability
       without exposing credentials.
+- [x] First native admin-app slice exists: `apps/trix-admin-api` provides a
+      loopback bearer-auth backend for the macOS `TrixAdminMac` target. It wraps
+      user operations, push test requests, media storage status, metrics/log
+      summaries, secret-safe audit events, and feature-flag storage without
+      exposing raw ejabberd `5280`.
+- [x] Shared Apple feature-flag evaluator exists in
+      `apple/Sources/SharedFeatureFlags`, and the operator workflow is
+      documented in `docs/feature-flags.md`.
 - [x] Keep admin credentials out of logs and repo files.
 
 ## Deferred MVP Items
@@ -525,9 +537,10 @@ copying old implementation details.
       open-room suppression locally rather than using app-wide active state as a
       push suppressor.
 - [x] Trix control-plane model is selected: for MVP closeout, checked-in
-      operator scripts use loopback-only ejabberd `mod_http_api`; any non-local
-      or multi-operator access still requires a small authenticated/audited Trix
-      wrapper before exposure.
+      operator scripts use loopback-only ejabberd `mod_http_api`, and the first
+      native admin-app backend is a loopback bearer-auth wrapper. Any public or
+      multi-operator admin exposure still requires a separate reviewed access
+      path before exposure.
 - [x] No custom crypto is added.
 
 ## Notes

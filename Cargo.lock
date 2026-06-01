@@ -1583,6 +1583,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "trix-admin-api"
+version = "0.2.8"
+dependencies = [
+ "anyhow",
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "trix-call-control"
 version = "0.2.8"
 dependencies = [

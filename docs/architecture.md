@@ -158,13 +158,14 @@ This control plane should use server-supported APIs, admin commands, or a small
 Trix service. It must not become a second messaging protocol or a parallel
 plaintext chat backend.
 
-For the MVP closeout, the concrete backend is a loopback-only ejabberd
+For the MVP closeout, the concrete backend started as a loopback-only ejabberd
 `mod_http_api` surface wrapped by `server/xmpp/scripts/operator-control.sh`.
-That covers friend account provisioning, password reset, account disable,
-small-directory search, and archive/upload/push health for a single trusted
-operator. A network-facing or multi-operator control plane remains a separate
-authenticated/audited wrapper; exposing ejabberd `5280` directly is out of
-scope.
+The native admin-app slice adds `apps/trix-admin-api`, an authenticated
+loopback-first wrapper for the macOS `TrixAdminMac` app. It covers user
+operations, push test requests, media-storage status, metrics/log summaries, and
+feature-flag storage without exposing raw ejabberd `5280`. Remote operator use
+should go through an SSH tunnel or another reviewed private access path; a
+public multi-operator admin API remains out of scope until separately reviewed.
 
 App-driven registration is handled by a separate invite wrapper, not XMPP public
 registration. Operators create one-use invite codes through an authenticated

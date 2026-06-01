@@ -173,6 +173,11 @@ protocol TrixClientStateService: Sendable {
     func setApplicationActive(_ isActive: Bool, session: TrixSession) async
 }
 
+protocol TrixReconnectService: Sendable {
+    func disconnectForNetworkLoss(session: TrixSession) async
+    func reconnect(session: TrixSession) async throws
+}
+
 protocol TrixCallControlService: Sendable {
     func prepareDirectVideoCall(
         peerUserID: String,
