@@ -92,6 +92,7 @@ final class TrixAppModel: ObservableObject {
     private var applicationIsActive = false
     private var networkWasSatisfied: Bool?
     private var networkRecoveryTask: Task<Void, Never>?
+    private var remoteNotificationRoomRefreshTask: Task<Void, Never>?
     private let foregroundRefreshInterval: Duration = .seconds(10)
 
     init(
@@ -578,10 +579,14 @@ final class TrixAppModel: ObservableObject {
         }
 
         let previousRooms = roomListViewModel.rooms
-        await refreshForeground(
-            markSelectedRoomRead: false,
-            reloadSelectedTimeline: applicationIsActive
-        )
+        if applicationIsActive {
+            await refreshForeground(
+                markSelectedRoomRead: false,
+                reloadSelectedTimeline: true
+            )
+        } else {
+            await refreshRoomsForRemoteNotification(session: session)
+        }
 
         let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
         let shouldScheduleLocalNotification = applicationIsActive ||
@@ -649,6 +654,34 @@ final class TrixAppModel: ObservableObject {
         }
         await syncAPNsRegistrationIfPossible()
         await syncVoIPPushRegistrationIfPossible()
+    }
+
+    private func refreshRoomsForRemoteNotification(session: TrixSession) async {
+        if let remoteNotificationRoomRefreshTask {
+            await remoteNotificationRoomRefreshTask.value
+            return
+        }
+
+        let refreshTask = Task { @MainActor [weak self] in
+            guard let self,
+                  self.session == session,
+                  !self.isLoggingOut else {
+                return
+            }
+
+            await self.roomListViewModel.reload(
+                session: session,
+                service: self.trixService,
+                selectedRoomID: nil,
+                showsLoading: false
+            )
+            self.lastRoomRefreshAt = Date()
+            self.refreshSelectedRoomSnapshot()
+            self.reconcileSelectedRoom()
+        }
+        remoteNotificationRoomRefreshTask = refreshTask
+        await refreshTask.value
+        remoteNotificationRoomRefreshTask = nil
     }
 
     func refreshForeground(

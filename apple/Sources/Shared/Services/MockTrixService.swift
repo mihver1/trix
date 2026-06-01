@@ -20,6 +20,7 @@ actor MockTrixService: TrixService {
     private var typingUserIDsByRoomID: [String: [String]]
     private var callDescriptorsByRoomID: [String: [TrixReceivedCallDescriptor]]
     private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState]
+    private var readMarkerStateRequests: Int
     private var restoreError: TrixClientError?
 
     init(now: Date = Date(), restoreError: TrixClientError? = nil) {
@@ -78,6 +79,7 @@ actor MockTrixService: TrixService {
         self.typingUserIDsByRoomID = [:]
         self.callDescriptorsByRoomID = [:]
         self.readMarkersByRoomAndUserID = [:]
+        self.readMarkerStateRequests = 0
         self.restoreError = restoreError
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
@@ -636,7 +638,12 @@ actor MockTrixService: TrixService {
     }
 
     func readMarkerState(roomID: String, session: TrixSession) async throws -> TrixRoomReadMarkerState? {
-        readMarkersByRoomAndUserID[readMarkerKey(roomID: roomID, userID: session.userID)]
+        readMarkerStateRequests += 1
+        return readMarkersByRoomAndUserID[readMarkerKey(roomID: roomID, userID: session.userID)]
+    }
+
+    func readMarkerStateRequestCount() -> Int {
+        readMarkerStateRequests
     }
 
     func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction] {

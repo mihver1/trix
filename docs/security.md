@@ -311,7 +311,12 @@ On 2026-06-01 the live VPS enabled ejabberd `mod_push_keepalive` with explicit
 stream-management ACK/resume timeouts. This keeps disconnected push-enabled
 sessions eligible for XEP-0357 wakeups without exposing APNs tokens or decrypted
 message content; post-restart component publish smoke reached the gateway and
-returned APNs delivery success without registration failures.
+returned APNs delivery success without registration failures. The same rollout
+later switched ejabberd `mod_push.notify_on` to `all` after real encrypted
+message sends did not trigger gateway publishes under the narrower `messages`
+mode. This may increase generic wake frequency, but the gateway payload remains
+plaintext-free and the Apple client still filters visible notification text
+locally.
 
 ## Call Media Risk
 

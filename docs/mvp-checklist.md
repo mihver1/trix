@@ -115,7 +115,10 @@ copying old implementation details.
       `mod_push_keepalive` plus explicit stream-management ACK/resume timeouts
       so disconnected push-enabled sessions are kept eligible for XEP-0357
       wakeups; post-restart component publish smoke updated the gateway store
-      with APNs delivery success and no failures.
+      with APNs delivery success and no failures. After real message sends still
+      produced no gateway publish attempts, live ejabberd was switched to
+      `mod_push.notify_on: all` so encrypted or metadata-only XMPP stanzas can
+      wake registered clients while the app keeps notification text generic.
 - [ ] Encrypted calls. The first checked-in slice adds the LiveKit/coturn media
       deployment profile, `trix-call-control`, Apple call descriptors,
       `TrixCallControlService`, `TrixMediaCallService`, LiveKit Swift dependency,
