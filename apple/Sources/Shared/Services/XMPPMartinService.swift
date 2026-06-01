@@ -1956,10 +1956,14 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let roomName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let roomLocalpart = Self.groupRoomLocalpart(from: roomName)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let mucNickname = Self.mucNickname(
+            from: accountJID,
+            resource: connection.client.boundJid?.resource ?? session.deviceID
+        )
         let joinResult = try await connection.mucModule.join(
             roomName: roomLocalpart,
             mucServer: XMPPClientConfiguration.conferenceServerName,
-            nickname: Self.mucNickname(from: accountJID),
+            nickname: mucNickname,
             password: nil
         )
         let room = Self.room(from: joinResult)
@@ -1970,7 +1974,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
         let roomID = room.jid.stringValue
         cacheGroupMembers([accountJID] + invitees, roomID: roomID, accountJID: accountJID, name: roomName)
-        try? await bookmarkGroupRoom(roomID: roomID, name: roomName, nickname: Self.mucNickname(from: accountJID), connection: connection)
+        try? await bookmarkGroupRoom(roomID: roomID, name: roomName, nickname: mucNickname, connection: connection)
         return TrixRoomSummary(
             id: roomID,
             name: roomName,
@@ -3881,10 +3885,19 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     ) async throws -> TrixRoomSummary {
         let mucJID = try Self.normalizedMUCJID(roomID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
-        let room = try await joinMucRoom(roomID: mucJID, password: password, accountJID: accountJID, connection: connection)
+        let mucNickname = Self.mucNickname(
+            from: accountJID,
+            resource: connection.client.boundJid?.resource ?? session.deviceID
+        )
+        let room = try await joinMucRoom(
+            roomID: mucJID,
+            password: password,
+            nickname: mucNickname,
+            connection: connection
+        )
         let name = displayName ?? cachedGroup(roomID: mucJID, accountJID: accountJID)?.name ?? Self.displayName(from: mucJID)
         cacheGroupMembers(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID), roomID: mucJID, accountJID: accountJID, name: name)
-        try? await bookmarkGroupRoom(roomID: mucJID, name: name, nickname: Self.mucNickname(from: accountJID), connection: connection)
+        try? await bookmarkGroupRoom(roomID: mucJID, name: name, nickname: mucNickname, connection: connection)
         return TrixRoomSummary(
             id: mucJID,
             name: name,
@@ -3899,7 +3912,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private func joinMucRoom(
         roomID: String,
         password: String?,
-        accountJID: String,
+        nickname: String,
         connection: Connection
     ) async throws -> RoomProtocol {
         let bareJID = BareJID(roomID)
@@ -3914,7 +3927,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         guard let room = connection.mucModule.roomManager.createRoom(
             for: connection.client,
             with: bareJID,
-            nickname: Self.mucNickname(from: accountJID),
+            nickname: nickname,
             password: password
         ) else {
             throw TrixClientError.roomUnavailable
@@ -5619,9 +5632,15 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         return "\(prefix)-\(UUID().uuidString.prefix(8).lowercased())"
     }
 
-    private static func mucNickname(from userID: String) -> String {
+    static func mucNickname(from userID: String, resource: String? = nil) -> String {
         let localpart = BareJID(userID).localPart ?? displayName(from: userID)
-        let filtered = localpart.unicodeScalars.map { scalar -> Character in
+        let nicknameSource = [localpart, resource]
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed?.isEmpty == false ? trimmed : nil
+            }
+            .joined(separator: "-")
+        let filtered = nicknameSource.unicodeScalars.map { scalar -> Character in
             CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
         }
         let nick = String(filtered)
