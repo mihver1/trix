@@ -7,6 +7,9 @@ import Security
 struct XMPPTimelineDiagnostics: Sendable {
     let mamQuerySucceeded: Bool
     let mamRawCount: Int
+    let mamPagesScanned: Int
+    let mamPageSize: Int
+    let mamReachedArchiveStart: Bool
     let mamFilteredCount: Int
     let mamEncryptedCount: Int
     let mamDecodedCount: Int
@@ -276,6 +279,9 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private struct ArchivedTimelineResult {
         let items: [TrixTimelineItem]
         let rawCount: Int
+        let pagesScanned: Int
+        let pageSize: Int
+        let reachedArchiveStart: Bool
         let filteredCount: Int
         let encryptedCount: Int
         let localKeyCount: Int
@@ -283,6 +289,19 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let accountSenderMissingLocalKeyCount: Int
         let peerSenderCount: Int
         let usedUnfilteredFallback: Bool
+    }
+
+    private struct MAMArchiveResult {
+        let events: [ArchivedMessageSnapshot]
+        let rawCount: Int
+        let pagesScanned: Int
+        let pageSize: Int
+        let reachedArchiveStart: Bool
+    }
+
+    private struct MAMArchivePage {
+        let events: [ArchivedMessageSnapshot]
+        let queryResult: MessageArchiveManagementModule.QueryResult
     }
 
     private final class TrixMartinRosterStore: RosterStore, @unchecked Sendable {
@@ -691,6 +710,10 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private let omemoPersistence: TrixOMEMOPersistence
     private let omemoService: String
     private static let maxCachedTimelineItems = 200
+    private static let mamArchivePageSize = 50
+    private static let mamArchiveMaxPages = 6
+    private static let mamArchiveUnfilteredFallbackMaxPages = 50
+    private static let mamArchiveUnfilteredFallbackTargetEvents = 50
     private static let maxCachedCallDescriptors = 100
     private static let typingRecordLifetime: TimeInterval = 6
     private static let xmppConnectionTimeout: TimeInterval = 15
@@ -1268,6 +1291,9 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                     XMPPTimelineDiagnostics(
                         mamQuerySucceeded: true,
                         mamRawCount: archive.rawCount,
+                        mamPagesScanned: archive.pagesScanned,
+                        mamPageSize: archive.pageSize,
+                        mamReachedArchiveStart: archive.reachedArchiveStart,
                         mamFilteredCount: archive.filteredCount,
                         mamEncryptedCount: archive.encryptedCount,
                         mamDecodedCount: archive.items.count,
@@ -1288,6 +1314,9 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                     XMPPTimelineDiagnostics(
                         mamQuerySucceeded: false,
                         mamRawCount: 0,
+                        mamPagesScanned: 0,
+                        mamPageSize: Self.mamArchivePageSize,
+                        mamReachedArchiveStart: false,
                         mamFilteredCount: 0,
                         mamEncryptedCount: 0,
                         mamDecodedCount: 0,
@@ -2159,18 +2188,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     func refreshPeerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedXMPPJID(userID)
-        let bareJID = BareJID(peerJID)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.omemoStack.module.addresses(for: [bareJID]) { result in
-                switch result {
-                case .success:
-                    continuation.resume(returning: ())
-                case .failure:
-                    continuation.resume(throwing: TrixClientError.e2eeUnavailable)
-                }
-            }
-        }
+        try await refreshDeviceIdentities(for: peerJID, connection: connection)
 
         return Self.peerDeviceIdentities(from: connection.omemoStack.store.identities(forName: peerJID), userID: peerJID)
     }
@@ -2602,18 +2620,26 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             connection.omemoStack.module.mamSyncFinished(for: peerBareJID)
         }
 
-        let filteredEvents = try await archiveEvents(peerJID: peerJID, connection: connection)
-        var events = filteredEvents
-        var rawCount = filteredEvents.count
+        let filteredArchive = try await archiveEvents(peerJID: peerJID, connection: connection)
+        var events = filteredArchive.events
+        var rawCount = filteredArchive.rawCount
+        var pagesScanned = filteredArchive.pagesScanned
+        var pageSize = filteredArchive.pageSize
+        var reachedArchiveStart = filteredArchive.reachedArchiveStart
         var usedUnfilteredFallback = false
 
-        if filteredEvents.isEmpty {
-            let unfilteredEvents = try await archiveEvents(peerJID: nil, connection: connection)
-            rawCount = unfilteredEvents.count
-            events = unfilteredEvents.filter {
-                Self.messageMatchesPeer($0.message, peerJID: peerJID, accountJID: accountJID)
-            }
-            usedUnfilteredFallback = !unfilteredEvents.isEmpty
+        if filteredArchive.events.isEmpty {
+            let unfilteredArchive = try await unfilteredArchiveEvents(
+                matchingPeerJID: peerJID,
+                accountJID: accountJID,
+                connection: connection
+            )
+            rawCount = unfilteredArchive.rawCount
+            pagesScanned = unfilteredArchive.pagesScanned
+            pageSize = unfilteredArchive.pageSize
+            reachedArchiveStart = unfilteredArchive.reachedArchiveStart
+            events = unfilteredArchive.events
+            usedUnfilteredFallback = unfilteredArchive.rawCount > 0
         }
 
         var items: [TrixTimelineItem] = []
@@ -2722,6 +2748,9 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         return ArchivedTimelineResult(
             items: items,
             rawCount: rawCount,
+            pagesScanned: pagesScanned,
+            pageSize: pageSize,
+            reachedArchiveStart: reachedArchiveStart,
             filteredCount: events.count,
             encryptedCount: encryptedCount,
             localKeyCount: localKeyCount,
@@ -2732,7 +2761,123 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         )
     }
 
-    private func archiveEvents(peerJID: String?, connection: Connection) async throws -> [ArchivedMessageSnapshot] {
+    private func archiveEvents(peerJID: String?, connection: Connection) async throws -> MAMArchiveResult {
+        do {
+            return try await archiveEvents(
+                version: .MAM2,
+                peerJID: peerJID,
+                connection: connection,
+                maxPages: Self.mamArchiveMaxPages
+            )
+        } catch {
+            return try await archiveEvents(
+                version: .MAM1,
+                peerJID: peerJID,
+                connection: connection,
+                maxPages: Self.mamArchiveMaxPages
+            )
+        }
+    }
+
+    private func unfilteredArchiveEvents(
+        matchingPeerJID: String,
+        accountJID: String,
+        connection: Connection
+    ) async throws -> MAMArchiveResult {
+        do {
+            return try await archiveEvents(
+                version: .MAM2,
+                peerJID: nil,
+                connection: connection,
+                maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
+                matchingPeerJID: matchingPeerJID,
+                matchingAccountJID: accountJID,
+                targetMatchedEvents: Self.mamArchiveUnfilteredFallbackTargetEvents
+            )
+        } catch {
+            return try await archiveEvents(
+                version: .MAM1,
+                peerJID: nil,
+                connection: connection,
+                maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
+                matchingPeerJID: matchingPeerJID,
+                matchingAccountJID: accountJID,
+                targetMatchedEvents: Self.mamArchiveUnfilteredFallbackTargetEvents
+            )
+        }
+    }
+
+    private func archiveEvents(
+        version: MessageArchiveManagementModule.Version,
+        peerJID: String?,
+        connection: Connection,
+        maxPages: Int,
+        matchingPeerJID: String? = nil,
+        matchingAccountJID: String? = nil,
+        targetMatchedEvents: Int? = nil
+    ) async throws -> MAMArchiveResult {
+        var events: [ArchivedMessageSnapshot] = []
+        var rawCount = 0
+        var pagesScanned = 0
+        var reachedArchiveStart = false
+        var rsm: RSM.Query? = RSM.Query(lastItems: Self.mamArchivePageSize)
+
+        while let currentRSM = rsm, pagesScanned < maxPages {
+            let page = try await archivePage(
+                version: version,
+                peerJID: peerJID,
+                rsm: currentRSM,
+                connection: connection
+            )
+            pagesScanned += 1
+            rawCount += page.events.count
+            if let matchingPeerJID, let matchingAccountJID {
+                events.append(contentsOf: page.events.filter {
+                    Self.messageMatchesPeer($0.message, peerJID: matchingPeerJID, accountJID: matchingAccountJID)
+                })
+            } else {
+                events.append(contentsOf: page.events)
+            }
+
+            if page.queryResult.complete || page.events.count < Self.mamArchivePageSize {
+                reachedArchiveStart = true
+                break
+            }
+
+            if let targetMatchedEvents,
+               events.count >= targetMatchedEvents {
+                break
+            }
+
+            guard let previousRSM = page.queryResult.rsm?.previous(Self.mamArchivePageSize) else {
+                reachedArchiveStart = true
+                break
+            }
+            rsm = previousRSM
+        }
+
+        let sortedEvents = events.sorted { lhs, rhs in
+            if lhs.timestamp != rhs.timestamp {
+                return lhs.timestamp < rhs.timestamp
+            }
+
+            return lhs.messageID < rhs.messageID
+        }
+        return MAMArchiveResult(
+            events: sortedEvents,
+            rawCount: rawCount,
+            pagesScanned: pagesScanned,
+            pageSize: Self.mamArchivePageSize,
+            reachedArchiveStart: reachedArchiveStart
+        )
+    }
+
+    private func archivePage(
+        version: MessageArchiveManagementModule.Version,
+        peerJID: String?,
+        rsm: RSM.Query,
+        connection: Connection
+    ) async throws -> MAMArchivePage {
         let queryID = "trix-mam-\(UUID().uuidString)"
         let collector = MAMArchiveCollector()
         let cancellable = connection.mamModule.archivedMessagesPublisher.sink { event in
@@ -2746,14 +2891,14 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             cancellable.cancel()
         }
 
-        let rsm = RSM.Query(lastItems: 50)
-        do {
-            try await queryArchive(version: .MAM2, peerJID: peerJID, queryID: queryID, rsm: rsm, connection: connection)
-        } catch {
-            try await queryArchive(version: .MAM1, peerJID: peerJID, queryID: queryID, rsm: rsm, connection: connection)
-        }
-
-        return collector.snapshot()
+        let result = try await queryArchive(
+            version: version,
+            peerJID: peerJID,
+            queryID: queryID,
+            rsm: rsm,
+            connection: connection
+        )
+        return MAMArchivePage(events: collector.snapshot(), queryResult: result)
     }
 
     private func queryArchive(
@@ -2762,13 +2907,13 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         queryID: String,
         rsm: RSM.Query,
         connection: Connection
-    ) async throws {
+    ) async throws -> MessageArchiveManagementModule.QueryResult {
         let query = MAMQueryForm(version: version)
         if let peerJID {
             query.with = JID(peerJID)
         }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MessageArchiveManagementModule.QueryResult, Error>) in
             connection.mamModule.queryItems(
                 version: version,
                 query: query,
@@ -2776,8 +2921,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 rsm: rsm
             ) { result in
                 switch result {
-                case .success:
-                    continuation.resume(returning: ())
+                case .success(let queryResult):
+                    continuation.resume(returning: queryResult)
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 }
@@ -2939,7 +3084,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         }
         invitationArchiveSyncConnectionDates[accountKey] = connection.createdAt
 
-        guard let archivedEvents = try? await archiveEvents(peerJID: nil, connection: connection) else {
+        guard let archivedEvents = try? await archiveEvents(peerJID: nil, connection: connection).events else {
             return
         }
 
@@ -3408,11 +3553,13 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         accountJID: String,
         connection: Connection
     ) async throws {
-        var events = try await archiveEvents(peerJID: roomID, connection: connection)
+        var events = try await archiveEvents(peerJID: roomID, connection: connection).events
         if events.isEmpty {
-            events = try await archiveEvents(peerJID: nil, connection: connection).filter {
-                Self.messageMatchesPeer($0.message, peerJID: roomID, accountJID: accountJID)
-            }
+            events = try await unfilteredArchiveEvents(
+                matchingPeerJID: roomID,
+                accountJID: accountJID,
+                connection: connection
+            ).events
         }
 
         let markers = events.compactMap { archived in
@@ -3662,6 +3809,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
     private func encodeOMEMOMessage(_ message: Message, recipientJIDs: [String], connection: Connection) async throws -> Message {
         await ensureOwnOMEMOSession(connection: connection)
+        try await ensureOwnAccountDevicesTrusted(connection: connection)
         let accountJID = connection.client.connectionConfiguration.userJid.stringValue
         let recipients = Self.uniqueRecipientJIDs(recipientJIDs + [accountJID]).map(BareJID.init)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Message, Error>) in
@@ -3671,6 +3819,35 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                     continuation.resume(returning: encryptedMessage)
                 case .failure:
                     continuation.resume(throwing: TrixClientError.omemoEncryptionFailed)
+                }
+            }
+        }
+    }
+
+    private func ensureOwnAccountDevicesTrusted(connection: Connection) async throws {
+        let accountJID = try Self.normalizedXMPPJID(connection.client.connectionConfiguration.userJid.stringValue)
+        try await refreshDeviceIdentities(for: accountJID, connection: connection)
+
+        let localDeviceID = String(connection.omemoStack.store.localRegistrationId())
+        let accountDevices = Self.peerDeviceIdentities(
+            from: connection.omemoStack.store.identities(forName: accountJID),
+            userID: accountJID
+        )
+        guard !Self.hasActiveUntrustedOwnAccountDevices(accountDevices, localDeviceID: localDeviceID) else {
+            throw TrixClientError.ownDeviceTrustRequired
+        }
+    }
+
+    private func refreshDeviceIdentities(for userID: String, connection: Connection) async throws {
+        let bareJID = BareJID(userID)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.omemoStack.module.addresses(for: [bareJID]) { result in
+                switch result {
+                case .success:
+                    continuation.resume(returning: ())
+                case .failure:
+                    continuation.resume(throwing: TrixClientError.e2eeUnavailable)
                 }
             }
         }
@@ -6272,6 +6449,21 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
                 return lhs.deviceID < rhs.deviceID
             }
+    }
+
+    static func hasActiveUntrustedOwnAccountDevices(
+        _ devices: [TrixPeerDeviceIdentity],
+        localDeviceID: String?
+    ) -> Bool {
+        devices.contains { device in
+            guard !device.isLocalDevice,
+                  device.deviceID != localDeviceID,
+                  device.isActive else {
+                return false
+            }
+
+            return !device.canSendEncrypted
+        }
     }
 
     private static func peerTrustState(from trust: Trust) -> TrixPeerDeviceTrustState {

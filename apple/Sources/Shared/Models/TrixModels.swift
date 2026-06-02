@@ -2355,6 +2355,7 @@ enum TrixClientError: LocalizedError {
     case sdkAdapterUnavailable
     case e2eeUnavailable
     case omemoDeviceTrustRequired
+    case ownDeviceTrustRequired
     case omemoEncryptionFailed
     case xmppConnectionFailed
     case apnsGatewayUnavailable
@@ -2466,6 +2467,8 @@ enum TrixClientError: LocalizedError {
             return "OMEMO is required before sending."
         case .omemoDeviceTrustRequired:
             return "Trust at least one active OMEMO device for this contact before sending."
+        case .ownDeviceTrustRequired:
+            return "Trust or revoke your other active account devices before sending so this message can sync to them."
         case .omemoEncryptionFailed:
             return "OMEMO encryption failed. Refresh the contact devices and try again."
         case .xmppConnectionFailed:

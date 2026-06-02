@@ -220,8 +220,9 @@ sent/delivered counts. The `timeline-restart` mode also requires
 `TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`, it first sends one generated OMEMO DM,
 then reloads MAM/cache, disconnects the service, restores through a fresh
 service instance, and requires overlapping item IDs after restart. It prints
-only IDs and MAM/cache counts, including whether archived sender stanzas are
-missing a local recipient key. The `group-timeline-restart` mode uses the same
+only IDs and MAM/cache counts, including scanned archive pages, whether the scan
+reached the archive start, and whether archived sender stanzas are missing a
+local recipient key. The `group-timeline-restart` mode uses the same
 three-account variables as `group-e2ee`, sends one OMEMO group message, restores
 through a fresh service instance, and requires timeline overlap after restart.
 `timeline-relaunch-seed` stores a scrubbed overlap marker plus a smoke Keychain
@@ -413,6 +414,16 @@ The checked-in Apple code is now the first XMPP client slice:
   the current account's own OMEMO device in the MartinOMEMO recipient set for
   DM and group sends; older archived stanzas without that local recipient key
   remain unrecoverable without a reviewed recovery/key-backup path;
+- new encrypted sends refresh the current account's published OMEMO devices and
+  are blocked while another active account device is still untrusted, so a
+  sender cannot create fresh ciphertext that their other signed-in client cannot
+  decrypt;
+- manual encrypted DM timeline refresh uses bounded MAM pagination instead of a
+  single 50-item tail query, scanning the peer-filtered archive up to 6 pages /
+  300 archived stanzas. If the server returns an empty peer-filtered page, the
+  unfiltered fallback scans deeper for matching peer stanzas instead of stopping
+  at the noisy account-wide tail. Live-smoke diagnostics report page depth and
+  raw scanned counts;
 - day separators, sender/time-window clustering, sender names on the first
   incoming group cluster, local unread preservation for inactive rooms, local
   unread clearing on open, `You:` outgoing previews, and local-only hide/forget

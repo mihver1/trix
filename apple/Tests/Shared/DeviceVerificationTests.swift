@@ -128,6 +128,32 @@ final class DeviceVerificationTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testActiveUntrustedOwnDevicesBlockEncryptedSend() {
+        let activeTrusted = Self.device(deviceID: "1001", trustState: .trusted, isActive: true)
+        let activeUntrusted = Self.device(deviceID: "2002", trustState: .undecided, isActive: true)
+        let inactiveUntrusted = Self.device(deviceID: "3003", trustState: .undecided, isActive: false)
+        let localUntrusted = Self.device(deviceID: "4004", trustState: .undecided, isActive: true, isLocalDevice: true)
+
+        XCTAssertFalse(
+            XMPPMartinService.hasActiveUntrustedOwnAccountDevices(
+                [activeTrusted, inactiveUntrusted, localUntrusted],
+                localDeviceID: "4004"
+            )
+        )
+        XCTAssertTrue(
+            XMPPMartinService.hasActiveUntrustedOwnAccountDevices(
+                [activeTrusted, activeUntrusted],
+                localDeviceID: "4004"
+            )
+        )
+        XCTAssertFalse(
+            XMPPMartinService.hasActiveUntrustedOwnAccountDevices(
+                [activeUntrusted],
+                localDeviceID: "2002"
+            )
+        )
+    }
+
     private static let session = TrixSession(
         userID: "@me:trix.selfhost.ru",
         deviceID: "TEST",
@@ -147,6 +173,23 @@ final class DeviceVerificationTests: XCTestCase {
         deviceDisplayName: "iPhone",
         firstSeenAt: Date(timeIntervalSince1970: 0)
     )
+
+    private static func device(
+        deviceID: String,
+        trustState: TrixPeerDeviceTrustState,
+        isActive: Bool,
+        isLocalDevice: Bool = false
+    ) -> TrixPeerDeviceIdentity {
+        TrixPeerDeviceIdentity(
+            userID: session.userID,
+            deviceID: deviceID,
+            fingerprint: "AA:BB",
+            visualVerification: nil,
+            trustState: trustState,
+            isActive: isActive,
+            isLocalDevice: isLocalDevice
+        )
+    }
 }
 
 private struct FailingDeviceVerificationService: TrixDeviceVerificationService {

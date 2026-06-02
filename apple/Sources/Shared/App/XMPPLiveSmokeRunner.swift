@@ -3488,6 +3488,9 @@ enum XMPPLiveSmokeRunner {
         [
             "mam=\(diagnostics.mamQuerySucceeded ? "ok" : "failed")",
             "raw=\(diagnostics.mamRawCount)",
+            "pages=\(diagnostics.mamPagesScanned)",
+            "page_size=\(diagnostics.mamPageSize)",
+            "archive_start=\(diagnostics.mamReachedArchiveStart)",
             "filtered=\(diagnostics.mamFilteredCount)",
             "encrypted=\(diagnostics.mamEncryptedCount)",
             "decoded=\(diagnostics.mamDecodedCount)",
