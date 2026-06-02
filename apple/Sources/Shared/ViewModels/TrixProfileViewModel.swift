@@ -8,6 +8,8 @@ final class TrixProfileViewModel: ObservableObject {
     @Published var draftBio = ""
     @Published var draftStatusMessage = ""
     @Published var draftWebsite = ""
+    @Published private(set) var draftAvatarImage: TrixUserAvatarImage?
+    @Published private(set) var removesAvatar = false
     @Published private(set) var isLoading = false
     @Published private(set) var isSaving = false
     @Published private(set) var errorMessage: String?
@@ -25,7 +27,21 @@ final class TrixProfileViewModel: ObservableObject {
         return draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines) != currentDisplayName ||
             draftBio.trimmingCharacters(in: .whitespacesAndNewlines) != currentBio ||
             draftStatusMessage.trimmingCharacters(in: .whitespacesAndNewlines) != currentStatusMessage ||
-            draftWebsite.trimmingCharacters(in: .whitespacesAndNewlines) != currentWebsite
+            draftWebsite.trimmingCharacters(in: .whitespacesAndNewlines) != currentWebsite ||
+            draftAvatarImage != nil ||
+            removesAvatar
+    }
+
+    var displayedAvatarURL: String? {
+        if let draftAvatarImage {
+            return draftAvatarImage.dataURL
+        }
+
+        if removesAvatar {
+            return nil
+        }
+
+        return profile?.avatarURL
     }
 
     func load(profile loadProfile: () async throws -> TrixUserProfile) async {
@@ -89,12 +105,29 @@ final class TrixProfileViewModel: ObservableObject {
                 displayName: draftDisplayName,
                 bio: draftBio,
                 statusMessage: draftStatusMessage,
-                website: draftWebsite
+                website: draftWebsite,
+                avatar: avatarUpdate
             )))
             didSave = true
         } catch {
             errorMessage = error.trixUserFacingMessage
         }
+    }
+
+    func setAvatarImage(_ image: TrixUserAvatarImage) {
+        draftAvatarImage = image
+        removesAvatar = false
+        resetSavedState()
+    }
+
+    func removeAvatar() {
+        guard displayedAvatarURL != nil else {
+            return
+        }
+
+        draftAvatarImage = nil
+        removesAvatar = true
+        resetSavedState()
     }
 
     func resetSavedState() {
@@ -107,5 +140,15 @@ final class TrixProfileViewModel: ObservableObject {
         self.draftBio = profile.metadata.bio ?? ""
         self.draftStatusMessage = profile.metadata.statusMessage ?? ""
         self.draftWebsite = profile.metadata.website ?? ""
+        self.draftAvatarImage = nil
+        self.removesAvatar = false
+    }
+
+    private var avatarUpdate: TrixUserAvatarUpdate {
+        if let draftAvatarImage {
+            return .image(draftAvatarImage)
+        }
+
+        return removesAvatar ? .remove : .unchanged
     }
 }

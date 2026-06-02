@@ -185,7 +185,7 @@ copying old implementation details.
       `docs/tasks/2026-05-19-encrypted-call-smoke-tests.md`.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
-      status, and website.
+      status, website, and cropped avatar PHOTO updates.
 - [x] Direct chat and participant profile surfaces show current online presence
       when available, otherwise a compact XMPP last-activity value such as
       `Last seen: 1h ago`.

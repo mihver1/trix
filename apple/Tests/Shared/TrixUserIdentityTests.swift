@@ -56,4 +56,94 @@ final class TrixUserIdentityTests: XCTestCase {
 
         XCTAssertEqual(session.userID, "@me:trix.selfhost.ru")
     }
+
+    func testMockProfileUpdateStoresAvatarDataURL() async throws {
+        let service = MockTrixService()
+        let session = try await service.login(
+            userID: "me",
+            password: "test-password",
+            serverURL: XMPPClientConfiguration.connectionURL
+        )
+        let avatarData = Data("avatar-png".utf8)
+
+        let profile = try await service.updateProfile(
+            TrixUserProfileUpdate(
+                displayName: "Me",
+                bio: "",
+                statusMessage: "",
+                website: "",
+                avatar: .image(TrixUserAvatarImage(data: avatarData))
+            ),
+            session: session
+        )
+
+        XCTAssertEqual(TrixUserAvatarImage.imageData(fromDataURL: profile.avatarURL), avatarData)
+        XCTAssertTrue(profile.avatarURL?.hasPrefix("data:image/png;base64,") == true)
+    }
+
+    func testMockProfileUpdatePreservesAvatarUnlessChanged() async throws {
+        let service = MockTrixService()
+        let session = try await service.login(
+            userID: "me",
+            password: "test-password",
+            serverURL: XMPPClientConfiguration.connectionURL
+        )
+        let avatarData = Data("avatar-png".utf8)
+
+        _ = try await service.updateProfile(
+            TrixUserProfileUpdate(
+                displayName: "Me",
+                bio: "",
+                statusMessage: "",
+                website: "",
+                avatar: .image(TrixUserAvatarImage(data: avatarData))
+            ),
+            session: session
+        )
+        let updatedProfile = try await service.updateProfile(
+            TrixUserProfileUpdate(
+                displayName: "Updated Me",
+                bio: "bio",
+                statusMessage: "",
+                website: ""
+            ),
+            session: session
+        )
+
+        XCTAssertEqual(updatedProfile.displayName, "Updated Me")
+        XCTAssertEqual(updatedProfile.metadata.bio, "bio")
+        XCTAssertEqual(TrixUserAvatarImage.imageData(fromDataURL: updatedProfile.avatarURL), avatarData)
+    }
+
+    func testMockProfileUpdateCanRemoveAvatar() async throws {
+        let service = MockTrixService()
+        let session = try await service.login(
+            userID: "me",
+            password: "test-password",
+            serverURL: XMPPClientConfiguration.connectionURL
+        )
+
+        _ = try await service.updateProfile(
+            TrixUserProfileUpdate(
+                displayName: "Me",
+                bio: "",
+                statusMessage: "",
+                website: "",
+                avatar: .image(TrixUserAvatarImage(data: Data("avatar-png".utf8)))
+            ),
+            session: session
+        )
+        let profile = try await service.updateProfile(
+            TrixUserProfileUpdate(
+                displayName: "Me",
+                bio: "",
+                statusMessage: "",
+                website: "",
+                avatar: .remove
+            ),
+            session: session
+        )
+
+        XCTAssertNil(profile.avatarURL)
+    }
 }

@@ -86,22 +86,55 @@ struct TrixUserMetadata: Codable, Equatable, Sendable {
     }
 }
 
+struct TrixUserAvatarImage: Equatable, Sendable {
+    let data: Data
+    let mimeType: String
+
+    init(data: Data, mimeType: String = "image/png") {
+        self.data = data
+        self.mimeType = mimeType.isEmpty ? "image/png" : mimeType
+    }
+
+    var dataURL: String {
+        "data:\(mimeType);base64,\(data.base64EncodedString())"
+    }
+
+    static func imageData(fromDataURL value: String?) -> Data? {
+        guard let value,
+              let markerRange = value.range(of: ";base64,") else {
+            return nil
+        }
+
+        let payload = value[markerRange.upperBound...]
+        return Data(base64Encoded: String(payload))
+    }
+}
+
+enum TrixUserAvatarUpdate: Equatable, Sendable {
+    case unchanged
+    case remove
+    case image(TrixUserAvatarImage)
+}
+
 struct TrixUserProfileUpdate: Equatable, Sendable {
     let displayName: String
     let bio: String
     let statusMessage: String
     let website: String
+    let avatar: TrixUserAvatarUpdate
 
     init(
         displayName: String,
         bio: String,
         statusMessage: String,
-        website: String
+        website: String,
+        avatar: TrixUserAvatarUpdate = .unchanged
     ) {
         self.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         self.bio = bio.trimmingCharacters(in: .whitespacesAndNewlines)
         self.statusMessage = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         self.website = website.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.avatar = avatar
     }
 
     var metadata: TrixUserMetadata {

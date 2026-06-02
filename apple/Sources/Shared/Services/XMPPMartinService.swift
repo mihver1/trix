@@ -6247,10 +6247,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             statusMessage: vCard?.findChild(name: "TITLE")?.value,
             website: vCard?.findChild(name: "URL")?.value
         )
-        let avatarURL = vCard?
-            .findChild(name: "PHOTO")?
-            .findChild(name: "EXTVAL")?
-            .value
+        let avatarURL = avatarURL(from: vCard?.findChild(name: "PHOTO"))
 
         return TrixUserProfile(
             userID: userID,
@@ -6279,7 +6276,11 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let updated = vCard.map(Element.init(element:)) ?? Element(name: "vCard", xmlns: "vcard-temp")
         updated.xmlns = "vcard-temp"
         updated.removeChildren { child in
-            ["FN", "N", "NICKNAME", "TITLE", "DESC", "URL", "JABBERID"].contains(child.name)
+            var replacedFields = ["FN", "N", "NICKNAME", "TITLE", "DESC", "URL", "JABBERID"]
+            if update.avatar != .unchanged {
+                replacedFields.append("PHOTO")
+            }
+            return replacedFields.contains(child.name)
         }
 
         let displayName = nonEmpty(update.displayName) ?? displayName(from: userID)
@@ -6293,8 +6294,34 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         addNonEmptyChild(name: "TITLE", value: update.statusMessage, to: updated)
         addNonEmptyChild(name: "DESC", value: update.bio, to: updated)
         addNonEmptyChild(name: "URL", value: update.website, to: updated)
+        addAvatar(update.avatar, to: updated)
         updated.addChild(Element(name: "JABBERID", cdata: userID))
         return updated
+    }
+
+    private static func avatarURL(from photo: Element?) -> String? {
+        if let extval = nonEmpty(photo?.findChild(name: "EXTVAL")?.value) {
+            return extval
+        }
+
+        guard let rawBase64 = nonEmpty(photo?.findChild(name: "BINVAL")?.value) else {
+            return nil
+        }
+
+        let mimeType = nonEmpty(photo?.findChild(name: "TYPE")?.value) ?? "image/png"
+        let normalizedBase64 = rawBase64.filter { !$0.isWhitespace }
+        return "data:\(mimeType);base64,\(normalizedBase64)"
+    }
+
+    private static func addAvatar(_ update: TrixUserAvatarUpdate, to vCard: Element) {
+        guard case .image(let image) = update else {
+            return
+        }
+
+        let photo = Element(name: "PHOTO")
+        photo.addChild(Element(name: "TYPE", cdata: image.mimeType))
+        photo.addChild(Element(name: "BINVAL", cdata: image.data.base64EncodedString()))
+        vCard.addChild(photo)
     }
 
     private static func directoryDefaultVCard(_ vCard: Element?, userID: String) -> (vCard: Element, changed: Bool) {

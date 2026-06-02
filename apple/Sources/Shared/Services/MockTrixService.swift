@@ -327,7 +327,7 @@ actor MockTrixService: TrixService {
         let profile = TrixUserProfile(
             userID: session.userID,
             displayName: update.displayName.isEmpty ? nil : update.displayName,
-            avatarURL: existing?.avatarURL,
+            avatarURL: avatarURL(from: update.avatar, existing: existing?.avatarURL),
             metadata: update.metadata
         )
         profilesByUserID[session.userID.lowercased()] = profile
@@ -1217,6 +1217,17 @@ actor MockTrixService: TrixService {
             localpart = userID.split(separator: "@").first.map(String.init) ?? userID
         }
         return localpart.capitalized
+    }
+
+    private func avatarURL(from update: TrixUserAvatarUpdate, existing: String?) -> String? {
+        switch update {
+        case .unchanged:
+            return existing
+        case .remove:
+            return nil
+        case .image(let image):
+            return image.dataURL
+        }
     }
 
     private func mockPeerDevice(for userID: String, deviceID: String = "1001") -> TrixPeerDeviceIdentity {
