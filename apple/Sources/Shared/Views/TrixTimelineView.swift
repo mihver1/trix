@@ -36,7 +36,9 @@ struct TrixTimelineView: View {
     @State private var draft = ""
     @State private var isShowingFileImporter = false
     @State private var isShowingDeviceTrust = false
+    #if os(iOS)
     @State private var isShowingGroupMembers = false
+    #endif
     @State private var isLoadingPeerDevices = false
     @State private var peerDevices: [TrixPeerDeviceIdentity] = []
     @State private var peerDeviceError: String?
@@ -259,9 +261,11 @@ struct TrixTimelineView: View {
                 )
             }
         }
-        .sheet(isPresented: $isShowingGroupMembers) {
-            TrixGroupMembersView(model: model, room: room)
-        }
+        #if os(iOS)
+            .sheet(isPresented: $isShowingGroupMembers) {
+                TrixGroupMembersView(model: model, room: room)
+            }
+        #endif
         .sheet(isPresented: $isShowingStickerPicker) {
             TrixStickerPickerView(
                 model: model,
@@ -593,6 +597,9 @@ struct TrixTimelineView: View {
                 .padding(.bottom, 8)
             }
         } else {
+            #if os(macOS)
+            EmptyView()
+            #else
             TrixGroupVoiceRoomBar(
                 snapshot: callViewModel.groupVoiceRoom(roomID: room.id),
                 participantTitle: callParticipantTitle,
@@ -611,6 +618,7 @@ struct TrixTimelineView: View {
             )
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            #endif
         }
     }
 
@@ -1429,12 +1437,16 @@ struct TrixTimelineView: View {
             }
             .help("Group OMEMO devices")
 
+            #if os(macOS)
+            groupVoiceRoomToolbarButton
+            #else
             Button {
                 isShowingGroupMembers = true
             } label: {
                 Image(systemName: "person.2.badge.gearshape")
             }
             .help("Group members")
+            #endif
         }
 
         Button {
@@ -1473,6 +1485,95 @@ struct TrixTimelineView: View {
             Image(systemName: "ellipsis.circle")
         }
         .help("Conversation actions")
+    }
+
+    private var groupVoiceRoomToolbarButton: some View {
+        Button {
+            let isJoined = groupVoiceRoomIsJoined
+            Task.detached(priority: .userInitiated) {
+                if isJoined {
+                    await model.leaveCall(in: room)
+                } else {
+                    await model.joinGroupVoiceRoom(in: room)
+                }
+            }
+        } label: {
+            if groupVoiceRoomIsWorking {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 24, height: 24)
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: groupVoiceRoomIsJoined ? "waveform.circle.fill" : "waveform.circle")
+
+                    if groupVoiceParticipantCount > 0 {
+                        Text(groupVoiceParticipantBadgeText)
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .frame(minWidth: 13, minHeight: 13)
+                            .background(TrixDesign.groupAccent, in: Capsule())
+                            .offset(x: 7, y: -7)
+                    }
+                }
+                .frame(width: 24, height: 24)
+            }
+        }
+        .disabled(groupVoiceRoomIsWorking)
+        .help(groupVoiceRoomHelp)
+        .accessibilityLabel(groupVoiceRoomAccessibilityLabel)
+    }
+
+    private var groupVoiceRoomIsJoined: Bool {
+        let callState = callViewModel.callLifecycleState(roomID: room.id)
+        return callState.kind == .groupVoice &&
+            callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil
+    }
+
+    private var groupVoiceRoomIsWorking: Bool {
+        let callState = callViewModel.callLifecycleState(roomID: room.id)
+        return callState.isActing || callViewModel.isActing(roomID: room.id)
+    }
+
+    private var groupVoiceParticipantCount: Int {
+        callViewModel.groupVoiceRoom(roomID: room.id).activeParticipantCount
+    }
+
+    private var groupVoiceParticipantBadgeText: String {
+        groupVoiceParticipantCount > 9 ? "9+" : "\(groupVoiceParticipantCount)"
+    }
+
+    private var groupVoiceRoomHelp: String {
+        if groupVoiceRoomIsWorking {
+            return "Updating voice room"
+        }
+
+        if groupVoiceRoomIsJoined {
+            return "Leave voice room"
+        }
+
+        if groupVoiceParticipantCount > 0 {
+            return "Join voice room - \(groupVoiceParticipantLabel)"
+        }
+
+        return "Join voice room"
+    }
+
+    private var groupVoiceRoomAccessibilityLabel: String {
+        if groupVoiceRoomIsWorking {
+            return "Updating voice room"
+        }
+
+        if groupVoiceRoomIsJoined {
+            return "Leave voice room"
+        }
+
+        return "Join voice room, \(groupVoiceParticipantLabel)"
+    }
+
+    private var groupVoiceParticipantLabel: String {
+        let count = groupVoiceParticipantCount
+        return count == 1 ? "1 participant" : "\(count) participants"
     }
 
     private var headerVerticalPadding: CGFloat {
