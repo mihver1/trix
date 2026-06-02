@@ -494,6 +494,8 @@ private struct TrixMacRoomContextView: View {
     @State private var isLoadingMembers = false
     @State private var isLoadingCommonRooms = false
     @State private var isUpdatingMembership = false
+    @State private var isCommonChatsExpanded = true
+    @State private var isSharedMediaExpanded = true
 
     init(model: TrixAppModel, room: TrixRoomSummary?) {
         self.model = model
@@ -661,8 +663,17 @@ private struct TrixMacRoomContextView: View {
     }
 
     private var commonChatsSection: some View {
-        inspectorSection(title: "Common Chats", systemImage: "bubble.left.and.bubble.right") {
-            VStack(alignment: .leading, spacing: 8) {
+        inspectorCollapsibleSection(
+            title: "Common Chats",
+            systemImage: "bubble.left.and.bubble.right",
+            count: commonRooms.count,
+            isExpanded: $isCommonChatsExpanded
+        ) {
+            boundedInspectorList(
+                itemCount: commonRooms.count,
+                scrollThreshold: 4,
+                maxHeight: 168
+            ) {
                 if isLoadingCommonRooms {
                     ProgressView()
                         .controlSize(.small)
@@ -673,19 +684,14 @@ private struct TrixMacRoomContextView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     ForEach(commonRooms) { room in
-                        HStack(spacing: 10) {
-                            TrixRoomKindMark(kind: room.kind, size: 28)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(room.name)
-                                    .font(.callout.weight(.medium))
-                                    .lineLimit(1)
-                                Text(room.lastMessagePreview)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
+                        Button {
+                            openRoom(room)
+                        } label: {
+                            TrixMacCommonRoomRow(room: room)
                         }
+                        .buttonStyle(.plain)
+                        .help("Open \(room.name)")
+                        .accessibilityLabel("Open \(room.name)")
                     }
                 }
             }
@@ -693,17 +699,34 @@ private struct TrixMacRoomContextView: View {
     }
 
     private func sharedMediaSection(_ items: [TrixTimelineItem]) -> some View {
-        inspectorSection(title: "Shared Media", systemImage: "photo.on.rectangle") {
-            VStack(alignment: .leading, spacing: 8) {
+        inspectorCollapsibleSection(
+            title: "Shared Media",
+            systemImage: "photo.on.rectangle",
+            count: items.count,
+            isExpanded: $isSharedMediaExpanded
+        ) {
+            boundedInspectorList(
+                itemCount: items.count,
+                scrollThreshold: 5,
+                maxHeight: 300
+            ) {
                 ForEach(items) { item in
                     if let attachment = item.attachment {
                         TrixMacSharedMediaRow(
                             item: item,
                             attachment: attachment,
+                            preview: timelineViewModel.inlineAttachmentPreviews[item.id],
                             isDownloading: timelineViewModel.downloadingAttachmentID == item.id,
+                            isLoadingPreview: timelineViewModel.inlineAttachmentPreviewLoadingIDs.contains(item.id),
+                            previewFailure: timelineViewModel.inlineAttachmentPreviewFailures[item.id],
                             open: {
                                 Task {
                                     await model.downloadAttachment(for: item)
+                                }
+                            },
+                            loadPreview: {
+                                Task {
+                                    await model.loadInlineAttachmentPreview(for: item)
                                 }
                             }
                         )
@@ -743,6 +766,74 @@ private struct TrixMacRoomContextView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func inspectorCollapsibleSection<Content: View>(
+        title: String,
+        systemImage: String,
+        count: Int,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: isExpanded.wrappedValue ? 10 : 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.18)) {
+                    isExpanded.wrappedValue.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Label(title, systemImage: systemImage)
+                        .font(.headline)
+
+                    Spacer(minLength: 8)
+
+                    Text("\(count)")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(TrixDesign.secondarySurface, in: Capsule())
+
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 0 : -90))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .help(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
+
+            if isExpanded.wrappedValue {
+                content()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func boundedInspectorList<Content: View>(
+        itemCount: Int,
+        scrollThreshold: Int,
+        maxHeight: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if itemCount > scrollThreshold {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: maxHeight)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
+        }
     }
 
     private func loadInspector(room: TrixRoomSummary) async {
@@ -845,6 +936,13 @@ private struct TrixMacRoomContextView: View {
             await loadInspector(room: room)
         } catch {
             membershipErrorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    private func openRoom(_ room: TrixRoomSummary) {
+        model.prepareRoomSelection(room)
+        Task {
+            await model.selectRoom(room)
         }
     }
 
@@ -1053,49 +1151,108 @@ private struct TrixMacParticipantRow<Action: View>: View {
     }
 }
 
-private struct TrixMacSharedMediaRow: View {
-    let item: TrixTimelineItem
-    let attachment: TrixTimelineAttachment
-    let isDownloading: Bool
-    let open: () -> Void
+private struct TrixMacCommonRoomRow: View {
+    let room: TrixRoomSummary
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: attachment.isSticker ? "face.smiling" : (attachment.isImage ? "photo" : "doc"))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(TrixDesign.accent)
-                .frame(width: 32, height: 32)
-                .background(TrixDesign.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            TrixRoomKindMark(kind: room.kind, size: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.isSticker ? (attachment.stickerMetadata?.packTitle ?? "Sticker") : attachment.filename)
+                Text(room.name)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
 
-                Text(mediaSubtitle)
+                Text(room.lastMessagePreview)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 8)
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
 
-            Button {
-                open()
-            } label: {
+private struct TrixMacSharedMediaRow: View {
+    let item: TrixTimelineItem
+    let attachment: TrixTimelineAttachment
+    let preview: TrixAttachmentDownload?
+    let isDownloading: Bool
+    let isLoadingPreview: Bool
+    let previewFailure: String?
+    let open: () -> Void
+    let loadPreview: () -> Void
+
+    var body: some View {
+        Button {
+            guard attachment.isDownloadable, !isDownloading else {
+                return
+            }
+
+            open()
+        } label: {
+            HStack(spacing: 10) {
+                TrixMacSharedMediaThumbnail(
+                    attachment: attachment,
+                    preview: preview,
+                    isLoading: isLoadingPreview
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attachmentTitle)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+
+                    Text(mediaSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    if previewFailure != nil {
+                        Text("Preview unavailable")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
                 if isDownloading {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Image(systemName: "arrow.down.circle")
+                    Image(systemName: attachment.isDownloadable ? "eye.circle" : "lock.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(attachment.isDownloadable ? .secondary : .tertiary)
                 }
             }
-            .buttonStyle(.borderless)
-            .disabled(isDownloading || !attachment.isDownloadable)
-            .help(attachment.isDownloadable ? "Download and preview attachment" : "Attachment is not available for download")
-            .accessibilityLabel("Download and preview \(attachment.filename)")
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
+        .disabled(isDownloading || !attachment.isDownloadable)
+        .help(attachment.isDownloadable ? "Open \(attachment.filename)" : "Attachment is not available for download")
+        .accessibilityLabel("Open \(attachment.filename)")
+        .task(id: item.id) {
+            guard preview == nil,
+                  !isLoadingPreview,
+                  previewFailure == nil,
+                  TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment) else {
+                return
+            }
+
+            loadPreview()
+        }
+    }
+
+    private var attachmentTitle: String {
+        attachment.isSticker ? (attachment.stickerMetadata?.packTitle ?? "Sticker") : attachment.filename
     }
 
     private var mediaSubtitle: String {
@@ -1107,6 +1264,55 @@ private struct TrixMacSharedMediaRow: View {
         ).title
         let details = attachment.subtitle.isEmpty ? sender : "\(sender) - \(attachment.subtitle)"
         return "\(details) - \(item.timestamp.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+private struct TrixMacSharedMediaThumbnail: View {
+    let attachment: TrixTimelineAttachment
+    let preview: TrixAttachmentDownload?
+    let isLoading: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(TrixDesign.accent.opacity(0.12))
+
+            if let preview, let image = platformImage(from: preview.data) {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: placeholderSystemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(TrixDesign.accent)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+
+    private var placeholderSystemImage: String {
+        if attachment.isSticker {
+            return "face.smiling"
+        }
+
+        return attachment.isImage ? "photo" : "doc"
+    }
+
+    private func platformImage(from data: Data) -> Image? {
+        guard let image = NSImage(data: data) else {
+            return nil
+        }
+
+        return Image(nsImage: image)
     }
 }
 
