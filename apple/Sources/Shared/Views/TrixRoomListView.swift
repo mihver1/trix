@@ -76,7 +76,7 @@ struct TrixRoomListView: View {
                         }
                     )
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
                     .background(.regularMaterial)
                 }
 
@@ -664,12 +664,12 @@ private struct TrixInboxAccountHeader: View {
     let refresh: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 TrixAvatarView(
                     title: account.displayName.isEmpty ? TrixUserIdentity.displayName(from: account.userID) : account.displayName,
                     systemImage: "person.crop.circle",
-                    size: 32
+                    size: 28
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -696,29 +696,30 @@ private struct TrixInboxAccountHeader: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(isLoading)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Refresh rooms")
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    TrixStatusPill(
-                        title: unreadCount == 0 ? "No unread" : "\(cappedUnreadCount) unread",
-                        systemImage: unreadCount == 0 ? "checkmark.circle" : "circle.fill",
-                        tint: unreadCount == 0 ? Color.secondary : TrixDesign.accent
-                    )
+            HStack(spacing: 5) {
+                TrixCompactStatusPill(
+                    title: unreadCount == 0 ? "No unread" : "\(cappedUnreadCount) unread",
+                    systemImage: unreadCount == 0 ? "checkmark.circle" : "circle.fill",
+                    tint: unreadCount == 0 ? Color.secondary : TrixDesign.accent
+                )
 
-                    TrixStatusPill(
-                        title: invitationCount == 0 ? "No invites" : "\(invitationCount) invite\(invitationCount == 1 ? "" : "s")",
-                        systemImage: invitationCount == 0 ? "person.badge.plus" : "person.crop.circle.badge.plus",
-                        tint: invitationCount == 0 ? Color.secondary : Color.orange
-                    )
-                }
+                TrixCompactStatusPill(
+                    title: invitationCount == 0 ? "No invites" : "\(invitationCount) invite\(invitationCount == 1 ? "" : "s")",
+                    systemImage: invitationCount == 0 ? "person.badge.plus" : "person.crop.circle.badge.plus",
+                    tint: invitationCount == 0 ? Color.secondary : Color.orange
+                )
 
-                TrixStatusPill(
+                TrixCompactStatusPill(
                     title: pushStatusTitle,
                     systemImage: pushRegistration == nil ? "bell.slash" : "bell.badge",
                     tint: pushRegistration == nil ? Color.secondary : Color.green
                 )
+                Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -734,6 +735,27 @@ private struct TrixInboxAccountHeader: View {
 
     private var cappedUnreadCount: String {
         unreadCount > 99 ? "99+" : "\(max(unreadCount, 0))"
+    }
+}
+
+private struct TrixCompactStatusPill: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(tint.opacity(0.20), lineWidth: 1)
+            }
     }
 }
 

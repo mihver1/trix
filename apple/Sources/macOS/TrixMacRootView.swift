@@ -511,10 +511,6 @@ private struct TrixMacRoomContextView: View {
                     if room.kind == .group {
                         groupPeopleSection(room)
                     } else {
-                        directContactSection(room)
-
-                        Divider()
-
                         commonChatsSection
                     }
 
@@ -546,16 +542,25 @@ private struct TrixMacRoomContextView: View {
         }
     }
 
+    @ViewBuilder
     private func roomHeader(_ room: TrixRoomSummary) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        if room.kind == .direct {
+            directRoomHeader(room)
+        } else {
+            groupRoomHeader(room)
+        }
+    }
+
+    private func directRoomHeader(_ room: TrixRoomSummary) -> some View {
+        HStack(alignment: .center, spacing: 12) {
             TrixAvatarView(
                 title: room.name,
                 systemImage: room.kind.systemImage,
-                size: 54,
+                size: 50,
                 tint: room.kind.tint
             )
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(room.name)
                     .font(.title3.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -565,20 +570,40 @@ private struct TrixMacRoomContextView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
-
-                HStack(spacing: 6) {
-                    TrixStatusPill(
-                        title: room.kind == .direct ? "DM" : "Group",
-                        systemImage: room.kind.systemImage,
-                        tint: room.kind.tint
-                    )
-                    TrixStatusPill(
-                        title: room.isEncrypted ? "Encrypted" : "Unencrypted",
-                        systemImage: room.isEncrypted ? "lock.fill" : "lock.open.fill",
-                        tint: room.isEncrypted ? .green : .orange
-                    )
-                }
             }
+
+            Spacer(minLength: 8)
+
+            TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 22)
+                .help(room.isEncrypted ? "Encrypted" : "Not encrypted")
+        }
+    }
+
+    private func groupRoomHeader(_ room: TrixRoomSummary) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            TrixAvatarView(
+                title: room.name,
+                systemImage: room.kind.systemImage,
+                size: 50,
+                tint: room.kind.tint
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(room.name)
+                    .font(.title3.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(conversationSubtitle(for: room))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+
+            Spacer(minLength: 8)
+
+            TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 22)
+                .help(room.isEncrypted ? "Encrypted" : "Not encrypted")
         }
     }
 
@@ -623,28 +648,6 @@ private struct TrixMacRoomContextView: View {
                     Label("Add", systemImage: "person.badge.plus")
                 }
                 .disabled(selectedInvitees.isEmpty || isUpdatingMembership)
-
-                if let membershipErrorMessage {
-                    Text(membershipErrorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func directContactSection(_ room: TrixRoomSummary) -> some View {
-        inspectorSection(title: "Contact", systemImage: "person.crop.circle") {
-            VStack(alignment: .leading, spacing: 10) {
-                if let participant = counterparty(for: room) {
-                    TrixMacParticipantRow(participant: participant)
-                } else {
-                    Text("No contact details in the loaded timeline.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
 
                 if let membershipErrorMessage {
                     Text(membershipErrorMessage)

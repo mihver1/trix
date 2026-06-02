@@ -85,6 +85,7 @@ private struct TrixWorkspaceView: View {
                 NavigationStack {
                     TrixRoomListView(model: model, mode: .phoneInbox)
                         .navigationTitle("Chats")
+                        .trixInlineNavigationTitle()
                 }
                 .tabItem {
                     Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")

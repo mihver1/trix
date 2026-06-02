@@ -71,10 +71,12 @@ struct TrixTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.regularMaterial)
+            if shouldShowTimelineHeader {
+                header
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, headerVerticalPadding)
+                    .background(.regularMaterial)
+            }
 
             if let progress = visibleLoadProgress, !visibleTimelineItems.isEmpty {
                 timelineLoadProgressBar(progress)
@@ -190,8 +192,15 @@ struct TrixTimelineView: View {
         ) { providers in
             importAttachment(from: providers)
         }
-        .navigationTitle(room.name)
+        .navigationTitle(timelineNavigationTitle)
         .trixInlineNavigationTitle()
+        #if os(macOS)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                headerActions
+            }
+        }
+        #endif
         .fileImporter(
             isPresented: $isShowingFileImporter,
             allowedContentTypes: [.item],
@@ -1347,7 +1356,12 @@ struct TrixTimelineView: View {
         return Self.displayName(from: userID)
     }
 
+    @ViewBuilder
     private var header: some View {
+        fullHeader
+    }
+
+    private var fullHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             TrixAvatarView(
                 title: room.name,
@@ -1379,81 +1393,106 @@ struct TrixTimelineView: View {
 
             Spacer()
 
-            if room.kind == .direct {
-                let callState = callViewModel.callLifecycleState(roomID: room.id)
-                Button {
-                    Task.detached(priority: .userInitiated) {
-                        await model.startDirectVideoCall(in: room)
-                    }
-                } label: {
-                    Image(systemName: callState.phase.isActiveLike && callState.kind == .directVideo ? "video.fill" : "video")
-                }
-                .disabled(
-                    !canSendEncrypted ||
-                        callViewModel.isActing(roomID: room.id) ||
-                        !canStartDirectVideoCall(with: callState)
-                )
-                .help("Video call")
+            headerActions
+        }
+    }
 
-                Button {
-                    showDeviceTrust()
-                } label: {
-                    Image(systemName: "checkmark.shield")
+    @ViewBuilder
+    private var headerActions: some View {
+        if room.kind == .direct {
+            let callState = callViewModel.callLifecycleState(roomID: room.id)
+            Button {
+                Task.detached(priority: .userInitiated) {
+                    await model.startDirectVideoCall(in: room)
                 }
-                .help("OMEMO devices")
-            } else {
-                Button {
-                    showDeviceTrust()
-                } label: {
-                    Image(systemName: "checkmark.shield")
-                }
-                .help("Group OMEMO devices")
-
-                Button {
-                    isShowingGroupMembers = true
-                } label: {
-                    Image(systemName: "person.2.badge.gearshape")
-                }
-                .help("Group members")
+            } label: {
+                Image(systemName: callState.phase.isActiveLike && callState.kind == .directVideo ? "video.fill" : "video")
             }
+            .disabled(
+                !canSendEncrypted ||
+                    callViewModel.isActing(roomID: room.id) ||
+                    !canStartDirectVideoCall(with: callState)
+            )
+            .help("Video call")
 
             Button {
-                Task {
-                    await model.loadTimeline(roomID: room.id)
-                }
+                showDeviceTrust()
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Image(systemName: "checkmark.shield")
             }
-            .help("Refresh timeline")
-
-            Menu {
-                Button {
-                    isShowingNotificationSettings = true
-                } label: {
-                    Label(
-                        "Notifications",
-                        systemImage: model.roomNotificationProfile(for: room.id).systemImage
-                    )
-                }
-
-                if room.kind == .direct {
-                    Button(role: .destructive) {
-                        isShowingLocalForgetConfirmation = true
-                    } label: {
-                        Label("Forget DM Locally", systemImage: "eye.slash")
-                    }
-                } else {
-                    Button(role: .destructive) {
-                        isShowingGroupLeaveConfirmation = true
-                    } label: {
-                        Label("Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                }
+            .help("OMEMO devices")
+        } else {
+            Button {
+                showDeviceTrust()
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "checkmark.shield")
             }
-            .help("Conversation actions")
+            .help("Group OMEMO devices")
+
+            Button {
+                isShowingGroupMembers = true
+            } label: {
+                Image(systemName: "person.2.badge.gearshape")
+            }
+            .help("Group members")
         }
+
+        Button {
+            Task {
+                await model.loadTimeline(roomID: room.id)
+            }
+        } label: {
+            Image(systemName: "arrow.clockwise")
+        }
+        .help("Refresh timeline")
+
+        Menu {
+            Button {
+                isShowingNotificationSettings = true
+            } label: {
+                Label(
+                    "Notifications",
+                    systemImage: model.roomNotificationProfile(for: room.id).systemImage
+                )
+            }
+
+            if room.kind == .direct {
+                Button(role: .destructive) {
+                    isShowingLocalForgetConfirmation = true
+                } label: {
+                    Label("Forget DM Locally", systemImage: "eye.slash")
+                }
+            } else {
+                Button(role: .destructive) {
+                    isShowingGroupLeaveConfirmation = true
+                } label: {
+                    Label("Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .help("Conversation actions")
+    }
+
+    private var headerVerticalPadding: CGFloat {
+        #if os(macOS)
+        return room.kind == .direct ? 8 : 10
+        #else
+        return 10
+        #endif
+    }
+
+    private var shouldShowTimelineHeader: Bool {
+        #if os(macOS)
+        return false
+        #else
+        return true
+        #endif
+    }
+
+    private var timelineNavigationTitle: String {
+        return room.name
     }
 
     private func handleDraftChange(_ value: String) {
