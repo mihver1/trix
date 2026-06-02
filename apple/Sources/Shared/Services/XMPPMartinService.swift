@@ -503,6 +503,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let carbonsModule: MessageCarbonsModule
         let deliveryReceiptsModule: MessageDeliveryReceiptsModule
         let chatStateModule: ChatStateNotificationsModule
+        let presenceModule: PresenceModule
         let csiModule: ClientStateIndicationModule
         let mucModule: MucModule
         let bookmarksModule: PEPBookmarksModule
@@ -522,6 +523,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             carbonsModule: MessageCarbonsModule,
             deliveryReceiptsModule: MessageDeliveryReceiptsModule,
             chatStateModule: ChatStateNotificationsModule,
+            presenceModule: PresenceModule,
             csiModule: ClientStateIndicationModule,
             mucModule: MucModule,
             bookmarksModule: PEPBookmarksModule,
@@ -538,6 +540,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             self.carbonsModule = carbonsModule
             self.deliveryReceiptsModule = deliveryReceiptsModule
             self.chatStateModule = chatStateModule
+            self.presenceModule = presenceModule
             self.csiModule = csiModule
             self.mucModule = mucModule
             self.bookmarksModule = bookmarksModule
@@ -2307,6 +2310,17 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let jid = try Self.normalizedXMPPJID(userID)
         let vCard = try? await retrieveVCardElement(for: jid, connection: connection)
         return Self.profile(from: vCard, userID: jid)
+    }
+
+    func userActivity(userID: String, session: TrixSession) async throws -> TrixUserActivity {
+        let connection = try await ensureConnection(for: session)
+        let jid = try Self.normalizedXMPPJID(userID)
+        if Self.isUserOnline(jid, connection: connection) {
+            return TrixUserActivity(availability: .online)
+        }
+
+        let lastSeenAt = try? await lastActivityDate(for: jid, connection: connection)
+        return TrixUserActivity(availability: .offline, lastSeenAt: lastSeenAt)
     }
 
     func updateDisplayName(_ displayName: String, session: TrixSession) async throws -> TrixUserProfile {
@@ -4608,6 +4622,24 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         return try await connection.rosterModule.write(iq: iq, timeout: 10)
     }
 
+    private func lastActivityDate(for jid: String, connection: Connection) async throws -> Date? {
+        let iq = Iq()
+        iq.type = .get
+        iq.to = JID(jid)
+        iq.addChild(Element(name: "query", xmlns: "jabber:iq:last"))
+
+        let response = try await connection.rosterModule.write(iq: iq, timeout: 10)
+        guard let secondsValue = response
+            .findChild(name: "query", xmlns: "jabber:iq:last")?
+            .getAttribute("seconds")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            let seconds = TimeInterval(secondsValue) else {
+            return nil
+        }
+
+        return Date().addingTimeInterval(-max(0, seconds))
+    }
+
     private func makeConnection(jid: String, password: String, resource: String) throws -> Connection {
         let omemoStack = try TrixOMEMOStore.makeStack(
             account: jid,
@@ -4635,7 +4667,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         _ = client.modulesManager.register(DiscoveryModule())
         _ = client.modulesManager.register(AdHocCommandsModule())
         _ = client.modulesManager.register(PingModule())
-        _ = client.modulesManager.register(PresenceModule())
+        let presenceModule = PresenceModule()
+        _ = client.modulesManager.register(presenceModule)
         let messageCaptureModule = TrixMessageCaptureModule()
         _ = client.modulesManager.register(messageCaptureModule)
         let messageModule = MessageModule(chatManager: DefaultChatManager(store: DefaultChatStore()))
@@ -4681,6 +4714,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             carbonsModule: carbonsModule,
             deliveryReceiptsModule: deliveryReceiptsModule,
             chatStateModule: chatStateModule,
+            presenceModule: presenceModule,
             csiModule: csiModule,
             mucModule: mucModule,
             bookmarksModule: bookmarksModule,
@@ -6047,6 +6081,17 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             avatarURL: avatarURL,
             metadata: metadata
         )
+    }
+
+    private static func isUserOnline(_ userID: String, connection: Connection) -> Bool {
+        guard let presence = connection.presenceModule.store.bestPresence(
+            for: BareJID(userID),
+            context: connection.client.context
+        ) else {
+            return false
+        }
+
+        return presence.type == nil || presence.type == .available
     }
 
     private static func updatingVCard(

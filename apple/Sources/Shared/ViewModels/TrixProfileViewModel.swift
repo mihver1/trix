@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class TrixProfileViewModel: ObservableObject {
     @Published private(set) var profile: TrixUserProfile?
+    @Published private(set) var activity: TrixUserActivity?
     @Published var draftDisplayName = ""
     @Published var draftBio = ""
     @Published var draftStatusMessage = ""
@@ -33,6 +34,7 @@ final class TrixProfileViewModel: ObservableObject {
         }
 
         isLoading = true
+        activity = nil
         errorMessage = nil
         didSave = false
         defer { isLoading = false }
@@ -41,6 +43,34 @@ final class TrixProfileViewModel: ObservableObject {
             apply(try await loadProfile())
         } catch {
             errorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func load(
+        profile loadProfile: () async throws -> TrixUserProfile,
+        activity loadActivity: () async throws -> TrixUserActivity
+    ) async {
+        guard !isLoading else {
+            return
+        }
+
+        isLoading = true
+        activity = nil
+        errorMessage = nil
+        didSave = false
+        defer { isLoading = false }
+
+        do {
+            apply(try await loadProfile())
+        } catch {
+            errorMessage = error.trixUserFacingMessage
+            return
+        }
+
+        do {
+            activity = try await loadActivity()
+        } catch {
+            activity = .unknown
         }
     }
 

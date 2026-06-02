@@ -126,6 +126,56 @@ struct TrixStatusPill: View {
     }
 }
 
+struct TrixUserActivityIndicator: View {
+    let activity: TrixUserActivity?
+    var font: Font = .caption
+    var foregroundStyle: Color = .secondary
+    var showUnknown = true
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 60)) { context in
+            if let label = label(now: context.date) {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(dotTint)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+
+                    Text(label)
+                        .font(font)
+                        .foregroundStyle(textTint)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                .accessibilityLabel(label)
+            }
+        }
+    }
+
+    private var dotTint: Color {
+        activity?.isOnline == true ? Color.green : Color.secondary.opacity(0.65)
+    }
+
+    private var textTint: Color {
+        activity?.isOnline == true ? Color.green : foregroundStyle
+    }
+
+    private func label(now: Date) -> String? {
+        guard let activity else {
+            return showUnknown ? "Last seen: unknown" : nil
+        }
+
+        switch activity.availability {
+        case .online:
+            return "Online"
+        case .offline:
+            return TrixRelativeLastActivityFormatter.lastSeenLabel(for: activity.lastSeenAt, now: now)
+        case .unknown:
+            return showUnknown ? "Last seen: unknown" : nil
+        }
+    }
+}
+
 struct TrixRoomKindMark: View {
     let kind: TrixRoomKind
     var size: CGFloat = 24

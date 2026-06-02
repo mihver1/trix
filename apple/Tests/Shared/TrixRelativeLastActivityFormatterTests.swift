@@ -20,4 +20,26 @@ final class TrixRelativeLastActivityFormatterTests: XCTestCase {
     func testHidesMissingActivityDate() {
         XCTAssertNil(TrixRelativeLastActivityFormatter.label(for: .distantPast))
     }
+
+    func testFormatsLastSeenLabel() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        XCTAssertEqual(
+            TrixRelativeLastActivityFormatter.lastSeenLabel(for: now.addingTimeInterval(-60), now: now),
+            "Last seen: 1m ago"
+        )
+        XCTAssertEqual(
+            TrixRelativeLastActivityFormatter.lastSeenLabel(for: now.addingTimeInterval(-60 * 60), now: now),
+            "Last seen: 1h ago"
+        )
+        XCTAssertEqual(
+            TrixRelativeLastActivityFormatter.lastSeenLabel(for: now.addingTimeInterval(-24 * 60 * 60), now: now),
+            "Last seen: 1d ago"
+        )
+    }
+
+    func testFormatsUnknownLastSeen() {
+        XCTAssertEqual(TrixRelativeLastActivityFormatter.lastSeenLabel(for: nil), "Last seen: unknown")
+        XCTAssertEqual(TrixRelativeLastActivityFormatter.lastSeenLabel(for: .distantPast), "Last seen: unknown")
+    }
 }

@@ -542,8 +542,9 @@ The target protocol-neutral boundary is:
   server-backed leave. Non-owner group leave goes through the Trix
   control-plane wrapper before local MUC leave so the room is hidden only after
   server membership removal succeeds.
-- `TrixUserDirectoryService`: directory search and profile lookup/update through
-  the Trix control plane.
+- `TrixUserDirectoryService`: directory search, profile lookup/update, and
+  compact online/last-seen activity lookup for direct chat and profile surfaces
+  through the XMPP-backed client path.
 - `TrixDeviceVerificationService`: OMEMO device inventory, trust state, visual
   fingerprint presentation, and hidden technical fingerprint disclosure.
 - `TrixPushRegistrationService`: APNs token registration and unregister.

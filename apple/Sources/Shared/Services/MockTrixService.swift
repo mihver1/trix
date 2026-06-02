@@ -299,6 +299,16 @@ actor MockTrixService: TrixService {
         )
     }
 
+    func userActivity(userID: String, session: TrixSession) async throws -> TrixUserActivity {
+        let normalizedUserID = try Self.normalizedTrixUserID(userID)
+        if normalizedUserID.caseInsensitiveCompare(session.userID) == .orderedSame ||
+            normalizedUserID.localizedCaseInsensitiveContains("alice") {
+            return TrixUserActivity(availability: .online)
+        }
+
+        return TrixUserActivity(availability: .offline, lastSeenAt: Date().addingTimeInterval(-60 * 60))
+    }
+
     func updateDisplayName(_ displayName: String, session: TrixSession) async throws -> TrixUserProfile {
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existing = profilesByUserID[session.userID.lowercased()]

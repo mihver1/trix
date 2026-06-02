@@ -118,6 +118,28 @@ struct TrixUserSearchResult: Equatable, Sendable {
     let limited: Bool
 }
 
+struct TrixUserActivity: Equatable, Sendable {
+    enum Availability: Equatable, Sendable {
+        case online
+        case offline
+        case unknown
+    }
+
+    let availability: Availability
+    let lastSeenAt: Date?
+
+    init(availability: Availability, lastSeenAt: Date? = nil) {
+        self.availability = availability
+        self.lastSeenAt = lastSeenAt
+    }
+
+    static let unknown = TrixUserActivity(availability: .unknown)
+
+    var isOnline: Bool {
+        availability == .online
+    }
+}
+
 enum TrixDeviceVerificationState: String, Codable, Sendable {
     case unknown
     case verified

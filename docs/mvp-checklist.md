@@ -186,6 +186,9 @@ copying old implementation details.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.
+- [x] Direct chat and participant profile surfaces show current online presence
+      when available, otherwise a compact XMPP last-activity value such as
+      `Last seen: 1h ago`.
 - [x] Device trust and broader device-management surfaces. Apple Settings now
       shows the current OMEMO device, published account devices discovered
       through MartinOMEMO, active/trust state, a short visual fingerprint

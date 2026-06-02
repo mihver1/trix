@@ -488,6 +488,7 @@ private struct TrixMacRoomContextView: View {
     @State private var selectedInvitees: [TrixUserProfile] = []
     @State private var members: [TrixRoomMember] = []
     @State private var commonRooms: [TrixRoomSummary] = []
+    @State private var directUserActivity: TrixUserActivity?
     @State private var membersRoomID: String?
     @State private var membershipErrorMessage: String?
     @State private var isLoadingMembers = false
@@ -565,11 +566,11 @@ private struct TrixMacRoomContextView: View {
                     .font(.title3.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text(conversationSubtitle(for: room))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+                TrixUserActivityIndicator(
+                    activity: directUserActivity,
+                    font: .callout,
+                    foregroundStyle: .secondary
+                )
             }
 
             Spacer(minLength: 8)
@@ -748,11 +749,16 @@ private struct TrixMacRoomContextView: View {
         membersRoomID = room.id
         members = []
         commonRooms = []
+        directUserActivity = nil
         selectedInvitees = []
         membershipErrorMessage = nil
         isLoadingMembers = true
         defer {
             isLoadingMembers = false
+        }
+
+        if room.kind == .direct {
+            await loadDirectUserActivity(userID: room.id)
         }
 
         do {
@@ -769,6 +775,14 @@ private struct TrixMacRoomContextView: View {
             }
         } catch {
             membershipErrorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    private func loadDirectUserActivity(userID: String) async {
+        do {
+            directUserActivity = try await model.userActivity(userID: userID)
+        } catch {
+            directUserActivity = .unknown
         }
     }
 

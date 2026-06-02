@@ -976,6 +976,15 @@ enum TrixRelativeLastActivityFormatter {
 
         return "\(max(1, Int(elapsed / secondsPerYear)))y"
     }
+
+    static func lastSeenLabel(for date: Date?, now: Date = Date()) -> String {
+        guard let date,
+              let label = label(for: date, now: now) else {
+            return "Last seen: unknown"
+        }
+
+        return "Last seen: \(label) ago"
+    }
 }
 
 private struct TrixInviteRow: View {

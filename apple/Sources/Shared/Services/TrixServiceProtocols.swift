@@ -142,6 +142,7 @@ protocol TrixUserDirectoryService: Sendable {
         session: TrixSession
     ) async throws -> TrixUserSearchResult
     func profile(userID: String, session: TrixSession) async throws -> TrixUserProfile
+    func userActivity(userID: String, session: TrixSession) async throws -> TrixUserActivity
     func updateDisplayName(_ displayName: String, session: TrixSession) async throws -> TrixUserProfile
     func updateProfile(_ update: TrixUserProfileUpdate, session: TrixSession) async throws -> TrixUserProfile
 }

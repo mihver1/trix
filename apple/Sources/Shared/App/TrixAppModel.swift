@@ -1484,6 +1484,14 @@ final class TrixAppModel: ObservableObject {
         return try await trixService.profile(userID: userID ?? session.userID, session: session)
     }
 
+    func userActivity(userID: String) async throws -> TrixUserActivity {
+        guard let session else {
+            throw TrixClientError.missingSession
+        }
+
+        return try await trixService.userActivity(userID: userID, session: session)
+    }
+
     func updateDisplayName(_ displayName: String) async throws -> TrixUserProfile {
         guard let session else {
             throw TrixClientError.missingSession

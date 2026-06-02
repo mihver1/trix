@@ -63,6 +63,7 @@ struct TrixTimelineView: View {
     @State private var activeThreadFilter: TrixTimelineThreadFilter?
     @State private var lastDisplayedMarkerMessageID: String?
     @State private var selectedMentionProfile: TrixMentionProfileSelection?
+    @State private var directUserActivity: TrixUserActivity?
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -349,6 +350,7 @@ struct TrixTimelineView: View {
             }
             await loadMentionMembers()
             markLatestVisibleMessageDisplayed(timelineViewModel.items)
+            await loadDirectUserActivity()
             await loadPeerDevices(refresh: false)
             await model.loadAttachmentSendAvailability(roomID: room.id)
             await model.loadCallState(for: room)
@@ -1393,10 +1395,18 @@ struct TrixTimelineView: View {
                         size: 20
                     )
                 }
-                Text(room.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if room.kind == .direct {
+                    TrixUserActivityIndicator(
+                        activity: directUserActivity,
+                        font: .subheadline,
+                        foregroundStyle: .secondary
+                    )
+                } else {
+                    Text(room.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
@@ -2066,6 +2076,20 @@ struct TrixTimelineView: View {
         first.isLocalEcho == second.isLocalEcho &&
         calendar.isDate(first.timestamp, inSameDayAs: second.timestamp) &&
         second.timestamp.timeIntervalSince(first.timestamp) <= 5 * 60
+    }
+
+    private func loadDirectUserActivity() async {
+        guard room.kind == .direct else {
+            directUserActivity = nil
+            return
+        }
+
+        directUserActivity = nil
+        do {
+            directUserActivity = try await model.userActivity(userID: room.id)
+        } catch {
+            directUserActivity = .unknown
+        }
     }
 }
 
@@ -3039,9 +3063,14 @@ private struct TrixMentionProfileView: View {
         }
         .background(TrixDesign.screenBackground)
         .task(id: userID) {
-            await viewModel.load {
-                try await model.profile(userID: userID)
-            }
+            await viewModel.load(
+                profile: {
+                    try await model.profile(userID: userID)
+                },
+                activity: {
+                    try await model.userActivity(userID: userID)
+                }
+            )
         }
         .trixDialogSurface(minWidth: 420, minHeight: 300)
     }
@@ -3147,6 +3176,10 @@ private struct TrixMentionProfileView: View {
     private func profileDetails(_ profile: TrixUserProfile) -> some View {
         LabeledContent("User", value: TrixUserIdentity.handle(from: profile.userID))
 
+        if let activity = viewModel.activity {
+            TrixUserActivityStatusView(activity: activity)
+        }
+
         if let statusMessage = profile.metadata.statusMessage {
             LabeledContent("Status", value: statusMessage)
         }
@@ -3166,6 +3199,20 @@ private struct TrixMentionProfileView: View {
 
         if let website = profile.metadata.website {
             LabeledContent("Website", value: website)
+        }
+    }
+}
+
+private struct TrixUserActivityStatusView: View {
+    let activity: TrixUserActivity
+
+    var body: some View {
+        LabeledContent("Presence") {
+            TrixUserActivityIndicator(
+                activity: activity,
+                font: .body,
+                foregroundStyle: .secondary
+            )
         }
     }
 }

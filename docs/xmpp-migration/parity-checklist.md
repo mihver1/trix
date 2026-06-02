@@ -156,6 +156,8 @@ Definition of done:
 - [x] View own profile.
 - [x] Edit Trix-owned profile metadata.
 - [x] View useful participant profile metadata.
+- [x] Show compact participant online/last-seen activity in direct chat and
+      profile views.
 - [x] Show device/encryption state.
 - [x] Show server/account state.
 
