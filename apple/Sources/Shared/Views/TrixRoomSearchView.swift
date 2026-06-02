@@ -100,7 +100,8 @@ struct TrixRoomDirectoryUserSearchRow: View {
             TrixAvatarView(
                 title: profile.title,
                 systemImage: "person.fill",
-                size: 34
+                size: 34,
+                avatarURL: profile.avatarURL
             )
 
             VStack(alignment: .leading, spacing: 2) {

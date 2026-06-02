@@ -127,6 +127,7 @@ struct TrixGroupMembersView: View {
                     ForEach(Array(visibleMembers.enumerated()), id: \.element.id) { index, member in
                         TrixGroupMemberRow(
                             member: member,
+                            avatarURL: avatarURL(for: member),
                             isCurrentUser: isCurrentUser(member.userID),
                             isUpdating: isUpdating,
                             remove: {
@@ -315,10 +316,20 @@ struct TrixGroupMembersView: View {
         let currentUserID = model.account?.userID ?? model.session?.userID ?? ""
         return userID.caseInsensitiveCompare(currentUserID) == .orderedSame
     }
+
+    private func avatarURL(for member: TrixRoomMember) -> String? {
+        if isCurrentUser(member.userID),
+           let avatarURL = model.ownProfile?.avatarURL {
+            return avatarURL
+        }
+
+        return member.avatarURL
+    }
 }
 
 private struct TrixGroupMemberRow: View {
     let member: TrixRoomMember
+    let avatarURL: String?
     let isCurrentUser: Bool
     let isUpdating: Bool
     let remove: () -> Void
@@ -329,6 +340,7 @@ private struct TrixGroupMemberRow: View {
                 title: member.title,
                 systemImage: "person.fill",
                 size: 34,
+                avatarURL: avatarURL,
                 tint: isCurrentUser ? .secondary : TrixDesign.accent
             )
 

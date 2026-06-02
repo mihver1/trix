@@ -1015,9 +1015,22 @@ struct TrixRoomMember: Identifiable, Equatable, Sendable {
     let userID: String
     let displayName: String?
     let membership: TrixRoomMembership
+    let avatarURL: String?
 
     var id: String {
         userID
+    }
+
+    init(
+        userID: String,
+        displayName: String?,
+        membership: TrixRoomMembership,
+        avatarURL: String? = nil
+    ) {
+        self.userID = userID
+        self.displayName = displayName
+        self.membership = membership
+        self.avatarURL = avatarURL
     }
 
     var title: String {

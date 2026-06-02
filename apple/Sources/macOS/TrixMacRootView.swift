@@ -983,6 +983,7 @@ private struct TrixMacRoomContextView: View {
                 TrixMacParticipant(
                     userID: member.userID,
                     displayName: member.displayName,
+                    avatarURL: avatarURL(for: member, currentUserID: currentUserID),
                     membership: member.membership,
                     isCurrentUser: member.userID.caseInsensitiveCompare(currentUserID ?? "") == .orderedSame
                 )
@@ -995,6 +996,7 @@ private struct TrixMacRoomContextView: View {
                 TrixMacParticipant(
                     userID: currentUserID,
                     displayName: model.account?.displayName,
+                    avatarURL: model.ownProfile?.avatarURL,
                     membership: .joined,
                     isCurrentUser: true
                 )
@@ -1010,6 +1012,7 @@ private struct TrixMacRoomContextView: View {
                 TrixMacParticipant(
                     userID: item.sender,
                     displayName: nil,
+                    avatarURL: nil,
                     membership: nil,
                     isCurrentUser: false
                 )
@@ -1017,6 +1020,15 @@ private struct TrixMacRoomContextView: View {
         }
 
         return participants
+    }
+
+    private func avatarURL(for member: TrixRoomMember, currentUserID: String?) -> String? {
+        if member.userID.caseInsensitiveCompare(currentUserID ?? "") == .orderedSame,
+           let avatarURL = model.ownProfile?.avatarURL {
+            return avatarURL
+        }
+
+        return member.avatarURL
     }
 
     private func counterparty(
@@ -1032,6 +1044,7 @@ private struct TrixMacRoomContextView: View {
             return TrixMacParticipant(
                 userID: member.userID,
                 displayName: member.displayName,
+                avatarURL: avatarURL(for: member, currentUserID: currentUserID),
                 membership: member.membership,
                 isCurrentUser: false
             )
@@ -1043,6 +1056,7 @@ private struct TrixMacRoomContextView: View {
             return TrixMacParticipant(
                 userID: item.sender,
                 displayName: nil,
+                avatarURL: nil,
                 membership: nil,
                 isCurrentUser: false
             )
@@ -1052,6 +1066,7 @@ private struct TrixMacRoomContextView: View {
             return TrixMacParticipant(
                 userID: room.id,
                 displayName: room.name,
+                avatarURL: nil,
                 membership: nil,
                 isCurrentUser: false
             )
@@ -1076,6 +1091,7 @@ private struct TrixMacRoomContextView: View {
 private struct TrixMacParticipant: Identifiable {
     let userID: String
     let displayName: String?
+    let avatarURL: String?
     let membership: TrixRoomMembership?
     let isCurrentUser: Bool
 
@@ -1122,6 +1138,7 @@ private struct TrixMacParticipantRow<Action: View>: View {
                 title: participant.title,
                 systemImage: "person.fill",
                 size: 34,
+                avatarURL: participant.avatarURL,
                 tint: participant.isCurrentUser ? .secondary : TrixDesign.accent
             )
 
@@ -1259,6 +1276,7 @@ private struct TrixMacSharedMediaRow: View {
         let sender = TrixMacParticipant(
             userID: item.sender,
             displayName: nil,
+            avatarURL: nil,
             membership: nil,
             isCurrentUser: item.isLocalEcho
         ).title

@@ -2706,6 +2706,7 @@ private struct TrixGroupDeviceTrustMemberView: View {
                     title: entry.member.title,
                     systemImage: "person.fill",
                     size: 34,
+                    avatarURL: entry.member.avatarURL,
                     tint: entry.isCurrentUser ? .secondary : TrixDesign.accent
                 )
 
@@ -2989,6 +2990,7 @@ private struct TrixMentionPickerView: View {
                                 title: member.title,
                                 systemImage: "person.fill",
                                 size: 24,
+                                avatarURL: member.avatarURL,
                                 tint: TrixDesign.accent
                             )
 

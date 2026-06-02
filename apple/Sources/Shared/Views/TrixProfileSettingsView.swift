@@ -360,8 +360,6 @@ private struct TrixAvatarCropperSheet: View {
     private let sourceImage: CGImage?
     private let onApply: (TrixUserAvatarImage) -> Void
     private let onCancel: () -> Void
-    private let outputSide = 512
-
     @State private var zoom: CGFloat = 1
     @State private var settledZoom: CGFloat = 1
     @State private var offset = CGSize.zero
@@ -465,16 +463,15 @@ private struct TrixAvatarCropperSheet: View {
             zoom: zoom,
             offset: offset
         )
-        guard let data = TrixAvatarImageRenderer.pngData(
+        guard let avatarImage = TrixAvatarImageRenderer.avatarImage(
             from: sourceImage,
-            cropRect: layout.cropRect,
-            outputSide: outputSide
+            cropRect: layout.cropRect
         ) else {
             errorMessage = "Avatar image could not be cropped."
             return
         }
 
-        onApply(TrixUserAvatarImage(data: data))
+        onApply(avatarImage)
     }
 }
 
@@ -641,7 +638,11 @@ private struct TrixAvatarCropLayout {
     }
 }
 
-private enum TrixAvatarImageRenderer {
+enum TrixAvatarImageRenderer {
+    static let maxEncodedAvatarBytes = 48 * 1024
+    private static let preferredOutputSides = [192, 160, 128]
+    private static let preferredJPEGQualities: [CGFloat] = [0.82, 0.72, 0.62]
+
     static func cgImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
@@ -655,7 +656,33 @@ private enum TrixAvatarImageRenderer {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
-    static func pngData(from image: CGImage, cropRect: CGRect, outputSide: Int) -> Data? {
+    static func avatarImage(from image: CGImage, cropRect: CGRect) -> TrixUserAvatarImage? {
+        for outputSide in preferredOutputSides {
+            for quality in preferredJPEGQualities {
+                guard let data = jpegData(
+                    from: image,
+                    cropRect: cropRect,
+                    outputSide: outputSide,
+                    quality: quality
+                ) else {
+                    continue
+                }
+
+                if data.count <= maxEncodedAvatarBytes {
+                    return TrixUserAvatarImage(data: data, mimeType: "image/jpeg")
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func jpegData(
+        from image: CGImage,
+        cropRect: CGRect,
+        outputSide: Int,
+        quality: CGFloat
+    ) -> Data? {
         let fullRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         let safeCropRect = cropRect.intersection(fullRect).integral
         guard !safeCropRect.isNull,
@@ -674,6 +701,8 @@ private enum TrixAvatarImageRenderer {
         }
 
         context.interpolationQuality = .high
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: outputSide, height: outputSide))
         context.draw(croppedImage, in: CGRect(x: 0, y: 0, width: outputSide, height: outputSide))
 
         guard let outputImage = context.makeImage() else {
@@ -681,11 +710,14 @@ private enum TrixAvatarImageRenderer {
         }
 
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else {
             return nil
         }
 
-        CGImageDestinationAddImage(destination, outputImage, nil)
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: quality,
+        ]
+        CGImageDestinationAddImage(destination, outputImage, options as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             return nil
         }

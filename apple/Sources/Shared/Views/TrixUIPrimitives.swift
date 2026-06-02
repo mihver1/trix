@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 
 #if os(iOS)
 import UIKit
@@ -49,6 +50,7 @@ struct TrixAvatarView: View {
     let title: String
     let systemImage: String
     let size: CGFloat
+    var avatarURL: String?
     var tint: Color = TrixDesign.accent
 
     var body: some View {
@@ -56,15 +58,28 @@ struct TrixAvatarView: View {
             Circle()
                 .fill(resolvedTint.opacity(0.15))
 
-            if initials.isEmpty {
-                Image(systemName: systemImage)
-                    .font(.system(size: size * 0.38, weight: .semibold))
-                    .foregroundStyle(resolvedTint)
+            if let avatarData = TrixUserAvatarImage.imageData(fromDataURL: avatarURL),
+               let avatarImage = Self.cgImage(from: avatarData) {
+                Image(decorative: avatarImage, scale: 1)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else if let remoteAvatarURL {
+                AsyncImage(url: remoteAvatarURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    default:
+                        fallbackContent
+                    }
+                }
             } else {
-                Text(initials)
-                    .font(.system(size: size * 0.34, weight: .semibold))
-                    .foregroundStyle(resolvedTint)
-                    .minimumScaleFactor(0.7)
+                fallbackContent
             }
         }
         .frame(width: size, height: size)
@@ -72,6 +87,43 @@ struct TrixAvatarView: View {
             Circle()
                 .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
         }
+    }
+
+    @ViewBuilder
+    private var fallbackContent: some View {
+        if initials.isEmpty {
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(resolvedTint)
+        } else {
+            Text(initials)
+                .font(.system(size: size * 0.34, weight: .semibold))
+                .foregroundStyle(resolvedTint)
+                .minimumScaleFactor(0.7)
+        }
+    }
+
+    private var remoteAvatarURL: URL? {
+        guard let avatarURL,
+              let url = URL(string: avatarURL),
+              ["http", "https"].contains(url.scheme?.lowercased()) else {
+            return nil
+        }
+
+        return url
+    }
+
+    private static func cgImage(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1024,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
     private var resolvedTint: Color {

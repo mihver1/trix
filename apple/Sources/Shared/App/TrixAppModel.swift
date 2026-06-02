@@ -43,6 +43,7 @@ struct TrixStartupStatus: Equatable {
 final class TrixAppModel: ObservableObject {
     @Published private(set) var session: TrixSession?
     @Published private(set) var account: TrixAccount?
+    @Published private(set) var ownProfile: TrixUserProfile?
     @Published private(set) var isStarting = false
     @Published private(set) var startupStatus = TrixStartupStatus.idle
     @Published private(set) var isLoggingIn = false
@@ -933,7 +934,7 @@ final class TrixAppModel: ObservableObject {
                 currentUserID: session.userID
             )
         } else {
-            let members = (try? await trixService.members(roomID: room.id, session: session)) ?? []
+            let members = (try? await members(roomID: room.id)) ?? []
             candidates = Self.mentionCandidates(from: members, currentUserID: session.userID)
         }
 
@@ -1276,7 +1277,41 @@ final class TrixAppModel: ObservableObject {
             throw TrixClientError.missingSession
         }
 
-        return try await trixService.members(roomID: roomID, session: session)
+        let members = try await trixService.members(roomID: roomID, session: session)
+        return await enrichedMembersWithProfiles(members, session: session)
+    }
+
+    private func enrichedMembersWithProfiles(_ members: [TrixRoomMember], session: TrixSession) async -> [TrixRoomMember] {
+        var enrichedMembers: [TrixRoomMember] = []
+        enrichedMembers.reserveCapacity(members.count)
+
+        for member in members {
+            if Self.isCurrentUser(member.userID, session: session),
+               let ownProfile {
+                enrichedMembers.append(Self.member(member, applying: ownProfile))
+                continue
+            }
+
+            if let profile = try? await trixService.profile(userID: member.userID, session: session) {
+                if Self.isCurrentUser(profile.userID, session: session) {
+                    ownProfile = profile
+                }
+                enrichedMembers.append(Self.member(member, applying: profile))
+            } else {
+                enrichedMembers.append(member)
+            }
+        }
+
+        return enrichedMembers
+    }
+
+    private static func member(_ member: TrixRoomMember, applying profile: TrixUserProfile) -> TrixRoomMember {
+        TrixRoomMember(
+            userID: member.userID,
+            displayName: profile.displayName ?? member.displayName,
+            membership: member.membership,
+            avatarURL: profile.avatarURL ?? member.avatarURL
+        )
     }
 
     func loadCallState(for room: TrixRoomSummary) async {
@@ -1481,7 +1516,12 @@ final class TrixAppModel: ObservableObject {
             throw TrixClientError.missingSession
         }
 
-        return try await trixService.profile(userID: userID ?? session.userID, session: session)
+        let requestedUserID = userID ?? session.userID
+        let profile = try await trixService.profile(userID: requestedUserID, session: session)
+        if Self.isCurrentUser(requestedUserID, session: session) {
+            ownProfile = profile
+        }
+        return profile
     }
 
     func userActivity(userID: String) async throws -> TrixUserActivity {
@@ -1498,6 +1538,7 @@ final class TrixAppModel: ObservableObject {
         }
 
         let profile = try await trixService.updateDisplayName(displayName, session: session)
+        ownProfile = profile
         account = TrixAccount(
             userID: profile.userID,
             displayName: profile.displayName ?? "",
@@ -1512,6 +1553,7 @@ final class TrixAppModel: ObservableObject {
         }
 
         let profile = try await trixService.updateProfile(update, session: session)
+        ownProfile = profile
         account = TrixAccount(
             userID: profile.userID,
             displayName: profile.displayName ?? "",
@@ -1976,6 +2018,10 @@ final class TrixAppModel: ObservableObject {
             userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private static func isCurrentUser(_ userID: String, session: TrixSession) -> Bool {
+        normalizedUserKey(userID) == normalizedUserKey(session.userID)
+    }
+
     private func applyRoomNotificationProfileSnapshot(_ snapshot: TrixRoomNotificationProfileSnapshot) {
         roomNotificationProfileSnapshot = snapshot
         roomNotificationProfiles = snapshot.profilesByRoomID
@@ -2029,6 +2075,7 @@ final class TrixAppModel: ObservableObject {
     private func clearAuthenticatedState() {
         session = nil
         account = nil
+        ownProfile = nil
         selectedRoomID = nil
         selectedRoomSnapshot = nil
         pushRegistration = nil
