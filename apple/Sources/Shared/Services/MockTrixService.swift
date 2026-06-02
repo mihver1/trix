@@ -22,8 +22,14 @@ actor MockTrixService: TrixService {
     private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState]
     private var readMarkerStateRequests: Int
     private var restoreError: TrixClientError?
+    private var delayedMemberRoomIDs: Set<String>
+    private var memberReleaseWaiters: [String: [CheckedContinuation<Void, Never>]]
 
-    init(now: Date = Date(), restoreError: TrixClientError? = nil) {
+    init(
+        now: Date = Date(),
+        restoreError: TrixClientError? = nil,
+        delayedMemberRoomIDs: Set<String> = []
+    ) {
         let directRoom = TrixRoomSummary(
             id: "!dm-alice:trix.selfhost.ru",
             name: "Alice",
@@ -81,6 +87,8 @@ actor MockTrixService: TrixService {
         self.readMarkersByRoomAndUserID = [:]
         self.readMarkerStateRequests = 0
         self.restoreError = restoreError
+        self.delayedMemberRoomIDs = delayedMemberRoomIDs
+        self.memberReleaseWaiters = [:]
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
             "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
@@ -831,7 +839,21 @@ actor MockTrixService: TrixService {
             throw TrixClientError.roomUnavailable
         }
 
+        if delayedMemberRoomIDs.contains(roomID) {
+            await withCheckedContinuation { continuation in
+                memberReleaseWaiters[roomID, default: []].append(continuation)
+            }
+        }
+
         return membersByRoomID[roomID, default: []]
+    }
+
+    func releaseMembers(roomID: String) {
+        delayedMemberRoomIDs.remove(roomID)
+        let waiters = memberReleaseWaiters.removeValue(forKey: roomID) ?? []
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     func inviteUser(_ userID: String, roomID: String, session: TrixSession) async throws {

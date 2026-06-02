@@ -669,6 +669,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
     private var connections: [String: Connection] = [:]
     private let connectionOpenGate = TrixAsyncOperationGate<String, Connection>()
+    private let mucJoinGate = TrixAsyncOperationGate<String, TrixRoomSummary>()
+    private let groupMemberRefreshGate = TrixAsyncOperationGate<String, [TrixRoomMember]>()
     private var timelineHistory: [String: [String: [TrixTimelineItem]]] = [:]
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
     private var typingRecords: [String: [String: [String: TypingRecord]]] = [:]
@@ -742,6 +744,33 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     }
 
     #if DEBUG
+    init(
+        testCacheIdentifier rawIdentifier: String,
+        groupControlPlaneService: any TrixGroupControlPlaneService = HTTPGroupControlPlaneService()
+    ) {
+        let profile = TrixLocalProfileConfiguration(rawName: rawIdentifier)
+            ?? TrixLocalProfileConfiguration(rawName: "test-cache")!
+        let keySource = TrixEncryptedCacheKeySource.memory(Data(repeating: 7, count: 32))
+        self.timelineCacheStore = TrixTimelineCacheStore(
+            directoryName: "TimelineCache-Test-\(profile.name)",
+            keySource: keySource,
+            migratesLegacyKeychainItems: false
+        )
+        self.roomSummaryCacheStore = TrixRoomSummaryCacheStore(
+            directoryName: "RoomSummaryCache-Test-\(profile.name)",
+            keySource: keySource
+        )
+        self.groupRoomCacheStore = TrixGroupRoomCacheStore(
+            directoryName: "GroupMemberCache-Test-\(profile.name)",
+            keySource: keySource,
+            migratesLegacyKeychainItems: false
+        )
+        self.mucInvitationCacheStore = TrixMUCInvitationCacheStore(memoryOnly: true)
+        self.groupControlPlaneService = groupControlPlaneService
+        self.omemoPersistence = .memory
+        self.omemoService = "com.softgrid.trix.xmpp.omemo.test.\(profile.name)"
+    }
+
     init(
         localProfile: TrixLocalProfileConfiguration,
         groupControlPlaneService: any TrixGroupControlPlaneService = HTTPGroupControlPlaneService()
@@ -1835,24 +1864,42 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     func members(roomID: String, session: TrixSession) async throws -> [TrixRoomMember] {
         let peerJID = try Self.normalizedRoomID(roomID)
         if Self.isMUCJID(peerJID) {
-            let connection = try await ensureConnection(for: session)
-            let room = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
             let accountJID = try Self.normalizedXMPPJID(session.userID)
-            let refresh = try await groupMemberRefresh(room: room, accountJID: accountJID, connection: connection)
-            cacheGroupMembers(
-                refresh.members.map(\.userID),
-                roomID: peerJID,
-                accountJID: accountJID,
-                name: nil,
-                replacingExistingMembers: refresh.shouldReplaceCachedMembers
-            )
-            return refresh.members
+            if let cachedRefresh = cachedGroupMemberRefresh(roomID: peerJID, accountJID: accountJID) {
+                refreshGroupMembersInBackground(roomID: peerJID, session: session, accountJID: accountJID)
+                return cachedRefresh.members
+            }
+
+            do {
+                return try await refreshGroupMembersCoalesced(roomID: peerJID, session: session, accountJID: accountJID)
+            } catch {
+                if Self.shouldUseCachedGroupMembers(after: error),
+                   let cachedRefresh = cachedGroupMemberRefresh(roomID: peerJID, accountJID: accountJID) {
+                    return cachedRefresh.members
+                }
+
+                throw error
+            }
         }
 
         return [
             TrixRoomMember(userID: session.userID, displayName: Self.displayName(from: session.userID), membership: .joined),
             TrixRoomMember(userID: peerJID, displayName: Self.displayName(from: peerJID), membership: .joined),
         ]
+    }
+
+    private func refreshGroupMembersInBackground(roomID: String, session: TrixSession, accountJID: String) {
+        guard !session.accessToken.isEmpty else {
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            _ = try? await self.refreshGroupMembersCoalesced(roomID: roomID, session: session, accountJID: accountJID)
+        }
     }
 
     func inviteUser(_ userID: String, roomID: String, session: TrixSession) async throws {
@@ -3869,11 +3916,26 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             return room
         }
 
-        let summary = try await joinGroupRoom(roomID: roomID, displayName: nil, password: nil, session: session, connection: connection)
+        let summary = try await joinExistingGroupRoomCoalesced(roomID: roomID, session: session)
         guard let room = connection.mucModule.roomManager.room(for: connection.client, with: BareJID(summary.id)) else {
             throw TrixClientError.roomUnavailable
         }
         return room
+    }
+
+    private func joinExistingGroupRoomCoalesced(roomID: String, session: TrixSession) async throws -> TrixRoomSummary {
+        let mucJID = try Self.normalizedMUCJID(roomID)
+        let key = Self.mucJoinKey(session: session, roomID: mucJID)
+        return try await mucJoinGate.value(for: key) {
+            let connection = try await self.ensureConnection(for: session)
+            return try await self.joinGroupRoom(
+                roomID: mucJID,
+                displayName: nil,
+                password: nil,
+                session: session,
+                connection: connection
+            )
+        }
     }
 
     private func joinGroupRoom(
@@ -4060,6 +4122,49 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             affiliationMembers: affiliationMembers,
             accountJID: accountJID,
             affiliationsComplete: affiliationsComplete
+        )
+    }
+
+    private func refreshGroupMembersCoalesced(
+        roomID: String,
+        session: TrixSession,
+        accountJID: String
+    ) async throws -> [TrixRoomMember] {
+        let key = Self.groupMemberRefreshKey(session: session, roomID: roomID)
+        return try await groupMemberRefreshGate.value(for: key) {
+            try await self.refreshGroupMembers(roomID: roomID, session: session, accountJID: accountJID)
+        }
+    }
+
+    private func refreshGroupMembers(
+        roomID: String,
+        session: TrixSession,
+        accountJID: String
+    ) async throws -> [TrixRoomMember] {
+        let connection = try await ensureConnection(for: session)
+        let room = try await joinedGroupRoom(roomID: roomID, session: session, connection: connection)
+        let refresh = try await groupMemberRefresh(room: room, accountJID: accountJID, connection: connection)
+        cacheGroupMembers(
+            refresh.members.map(\.userID),
+            roomID: roomID,
+            accountJID: accountJID,
+            name: nil,
+            replacingExistingMembers: refresh.shouldReplaceCachedMembers
+        )
+        return refresh.members
+    }
+
+    private func cachedGroupMemberRefresh(roomID: String, accountJID: String) -> XMPPGroupMemberRefresh? {
+        guard let cachedGroup = cachedGroup(roomID: roomID, accountJID: accountJID) else {
+            return nil
+        }
+
+        return Self.mergedGroupMemberRefresh(
+            cachedMemberUserIDs: cachedGroup.memberUserIDs,
+            occupantUserIDs: [],
+            affiliationMembers: [],
+            accountJID: accountJID,
+            affiliationsComplete: false
         )
     }
 
@@ -5647,6 +5752,22 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         }
 
         return xmppError == .remote_server_timeout || xmppError == .undefined_condition
+    }
+
+    private static func shouldUseCachedGroupMembers(after error: Error) -> Bool {
+        if case TrixClientError.roomJoinTimedOut = error {
+            return true
+        }
+
+        return shouldReconnect(after: error)
+    }
+
+    private static func mucJoinKey(session: TrixSession, roomID: String) -> String {
+        "\(sessionKey(session))|\(roomID.lowercased())"
+    }
+
+    private static func groupMemberRefreshKey(session: TrixSession, roomID: String) -> String {
+        "\(sessionKey(session))|\(roomID.lowercased())"
     }
 
     private static func roomID(

@@ -334,6 +334,14 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+    func installTestSession(_ session: TrixSession, account: TrixAccount) async {
+        self.session = session
+        self.account = account
+        await reloadRooms()
+    }
+    #endif
+
     func registerWithInvite(inviteCode: String, localpart: String, displayName: String, password: String) async {
         guard !isRegistering, !isLoggingIn else {
             return
@@ -723,10 +731,16 @@ final class TrixAppModel: ObservableObject {
 
     func selectRoom(_ room: TrixRoomSummary) async {
         prepareRoomSelection(room)
-        await refreshMentionCandidates(for: room)
         await loadTimeline(roomID: room.id)
         roomListViewModel.markRead(roomID: room.id)
-        await markLatestVisibleItemDisplayed(roomID: room.id)
+        refreshSelectedRoomSnapshot()
+
+        Task { [weak self] in
+            await self?.refreshMentionCandidates(for: room)
+        }
+        Task { [weak self] in
+            await self?.markLatestVisibleItemDisplayed(roomID: room.id)
+        }
     }
 
     func prepareRoomSelection(_ room: TrixRoomSummary) {
