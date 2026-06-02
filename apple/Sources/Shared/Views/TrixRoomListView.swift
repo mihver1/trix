@@ -800,30 +800,15 @@ private struct TrixRoomRow: View {
                     Spacer(minLength: 8)
 
                     if mode == .phoneInbox {
-                        Text(room.lastActivityAt.formatted(date: .omitted, time: .shortened))
-                            .font(.caption.weight(room.unreadCount > 0 ? .semibold : .regular))
-                            .foregroundStyle(room.unreadCount > 0 ? TrixDesign.accent : Color.secondary)
-                            .monospacedDigit()
+                        TrixRelativeLastActivityText(
+                            date: room.lastActivityAt,
+                            font: .caption.weight(room.unreadCount > 0 ? .semibold : .regular),
+                            foregroundStyle: room.unreadCount > 0 ? TrixDesign.accent : Color.secondary
+                        )
                     }
                 }
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(room.lastMessagePreview)
-                        .font(.subheadline.weight(room.unreadCount > 0 ? .semibold : .regular))
-                        .foregroundStyle(room.unreadCount > 0 ? Color.primary : Color.secondary)
-                        .lineLimit(mode == .phoneInbox ? 2 : 1)
-
-                    Spacer(minLength: 8)
-
-                    if room.unreadCount > 0 {
-                        Text(cappedUnreadCount)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(TrixDesign.accent, in: Capsule())
-                            .foregroundStyle(.white)
-                    }
-                }
+                previewLine
 
                 if let callIndicator, mode == .phoneInbox {
                     TrixRoomCallIndicatorMark(indicator: callIndicator)
@@ -835,12 +820,69 @@ private struct TrixRoomRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, mode == .phoneInbox ? 10 : 4)
         .padding(.horizontal, mode == .phoneInbox ? 4 : 0)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    @ViewBuilder
+    private var previewLine: some View {
+        switch mode {
+        case .phoneInbox:
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                previewText
+                    .lineLimit(2)
+
+                Spacer(minLength: 8)
+
+                if room.unreadCount > 0 {
+                    unreadBadge
+                }
+            }
+        case .sidebar:
+            ZStack(alignment: .trailing) {
+                previewText
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .mask {
+                        TrixTrailingFadeMask(width: sidebarPreviewFadeWidth)
+                    }
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    TrixRelativeLastActivityText(
+                        date: room.lastActivityAt,
+                        font: .caption2.weight(room.unreadCount > 0 ? .semibold : .regular),
+                        foregroundStyle: room.unreadCount > 0 ? Color.primary : Color.secondary
+                    )
+
+                    if room.unreadCount > 0 {
+                        unreadBadge
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+        }
+    }
+
+    private var previewText: some View {
+        Text(room.lastMessagePreview)
+            .font(.subheadline.weight(room.unreadCount > 0 ? .semibold : .regular))
+            .foregroundStyle(room.unreadCount > 0 ? Color.primary : Color.secondary)
+    }
+
+    private var unreadBadge: some View {
+        Text(cappedUnreadCount)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(TrixDesign.accent, in: Capsule())
+            .foregroundStyle(.white)
+    }
+
+    private var sidebarPreviewFadeWidth: CGFloat {
+        room.unreadCount > 0 ? 108 : 72
     }
 
     private var accessibilityLabel: String {
@@ -857,6 +899,82 @@ private struct TrixRoomRow: View {
 
     private var cappedUnreadCount: String {
         room.unreadCount > 99 ? "99+" : "\(max(room.unreadCount, 0))"
+    }
+}
+
+struct TrixTrailingFadeMask: View {
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: width)
+        }
+    }
+}
+
+struct TrixRelativeLastActivityText: View {
+    let date: Date
+    let font: Font
+    let foregroundStyle: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 60)) { context in
+            if let label = TrixRelativeLastActivityFormatter.label(for: date, now: context.date) {
+                Text(label)
+                    .font(font)
+                    .foregroundStyle(foregroundStyle)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+        }
+    }
+}
+
+enum TrixRelativeLastActivityFormatter {
+    private static let secondsPerMinute: TimeInterval = 60
+    private static let secondsPerHour = secondsPerMinute * 60
+    private static let secondsPerDay = secondsPerHour * 24
+    private static let secondsPerWeek = secondsPerDay * 7
+    private static let secondsPerMonth = secondsPerDay * 30
+    private static let secondsPerYear = secondsPerDay * 365
+
+    static func label(for date: Date, now: Date = Date()) -> String? {
+        guard date != .distantPast else {
+            return nil
+        }
+
+        let elapsed = max(0, now.timeIntervalSince(date))
+        if elapsed < secondsPerHour {
+            return "\(max(1, Int(elapsed / secondsPerMinute)))m"
+        }
+
+        if elapsed < secondsPerDay {
+            return "\(max(1, Int(elapsed / secondsPerHour)))h"
+        }
+
+        if elapsed < secondsPerWeek {
+            return "\(max(1, Int(elapsed / secondsPerDay)))d"
+        }
+
+        if elapsed < secondsPerMonth {
+            return "\(max(1, Int(elapsed / secondsPerWeek)))w"
+        }
+
+        if elapsed < secondsPerYear {
+            return "\(max(1, Int(elapsed / secondsPerMonth)))mo"
+        }
+
+        return "\(max(1, Int(elapsed / secondsPerYear)))y"
     }
 }
 

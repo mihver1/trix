@@ -1146,24 +1146,46 @@ private struct TrixMacRoomRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Text(room.lastMessagePreview)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+                ZStack(alignment: .trailing) {
+                    Text(room.lastMessagePreview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .mask {
+                            TrixTrailingFadeMask(width: previewFadeWidth)
+                        }
 
-            Spacer()
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        TrixRelativeLastActivityText(
+                            date: room.lastActivityAt,
+                            font: .caption2.weight(room.unreadCount > 0 ? .semibold : .regular),
+                            foregroundStyle: room.unreadCount > 0 ? Color.primary : Color.secondary
+                        )
 
-            if room.unreadCount > 0 {
-                Text(room.unreadCount > 99 ? "99+" : "\(room.unreadCount)")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.blue, in: Capsule())
-                    .foregroundStyle(.white)
+                        if room.unreadCount > 0 {
+                            unreadBadge
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 4)
+    }
+
+    private var unreadBadge: some View {
+        Text(room.unreadCount > 99 ? "99+" : "\(room.unreadCount)")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(TrixDesign.accent, in: Capsule())
+            .foregroundStyle(.white)
+    }
+
+    private var previewFadeWidth: CGFloat {
+        room.unreadCount > 0 ? 108 : 72
     }
 }
 
