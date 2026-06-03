@@ -1620,6 +1620,30 @@ struct TrixMacSettingsView: View {
     private var securitySettings: some View {
         GroupBox("Device Verification And Recovery") {
             VStack(alignment: .leading, spacing: 12) {
+                TrixDevicePassportStatusView(
+                    viewModel: model.devicePassportViewModel,
+                    refresh: {
+                        Task {
+                            await model.syncDevicePassportState()
+                        }
+                    },
+                    approve: { request in
+                        Task {
+                            await model.approveDevicePassportRequest(request)
+                        }
+                    },
+                    decline: { request in
+                        Task {
+                            await model.declineDevicePassportRequest(request)
+                        }
+                    },
+                    dismissNotice: { notice in
+                        Task {
+                            await model.dismissDevicePassportNotice(notice)
+                        }
+                    }
+                )
+
                 TrixDeviceVerificationStatusView(
                     viewModel: deviceVerificationViewModel,
                     requestVerification: {

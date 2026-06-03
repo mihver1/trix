@@ -111,6 +111,31 @@ services:
       TRIX_CALL_PUSH_GATEWAY_URL: ${TRIX_CALL_PUSH_GATEWAY_URL:-http://push-gateway:8090/v0/apns/voip/call}
       TRIX_CALL_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-}
 
+  device-passport:
+    profiles:
+      - device-passport
+    build:
+      context: ${TRIX_DEVICE_PASSPORT_BUILD_CONTEXT:-../..}
+      dockerfile: ${TRIX_DEVICE_PASSPORT_DOCKERFILE:-Dockerfile}
+      args:
+        TRIX_BIN: trix-device-passport
+    depends_on:
+      - ejabberd
+    restart: unless-stopped
+    ports:
+      - "${TRIX_DEVICE_PASSPORT_BIND:-127.0.0.1}:${TRIX_DEVICE_PASSPORT_PORT:-8094}:8094"
+    environment:
+      TRIX_DEVICE_PASSPORT_BIND_ADDR: 0.0.0.0:8094
+      TRIX_DEVICE_PASSPORT_ALLOW_NON_LOOPBACK: "1"
+      TRIX_DEVICE_PASSPORT_LOG: ${TRIX_DEVICE_PASSPORT_LOG:-info,trix_device_passport=debug}
+      TRIX_DEVICE_PASSPORT_DB_PATH: /var/lib/trix-device-passport/device-passport.sqlite
+      TRIX_DEVICE_PASSPORT_APPROVAL_TTL_SECONDS: ${TRIX_DEVICE_PASSPORT_APPROVAL_TTL_SECONDS:-600}
+      TRIX_DEVICE_PASSPORT_OPERATOR_TOKEN: ${TRIX_DEVICE_PASSPORT_OPERATOR_TOKEN:-}
+      TRIX_XMPP_API_URL: http://ejabberd:5280/api
+      TRIX_XMPP_HOST: ${TRIX_XMPP_HOST:-trix.selfhost.ru}
+    volumes:
+      - device-passport-data:/var/lib/trix-device-passport
+
   admin-api:
     profiles:
       - admin
@@ -157,5 +182,6 @@ volumes:
   ejabberd-database:
   ejabberd-upload:
   admin-api-data:
+  device-passport-data:
   push-gateway-data:
   prosody-data:

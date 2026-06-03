@@ -79,6 +79,8 @@ The target service boundary is protocol-neutral:
   the Trix control plane.
 - `TrixDeviceVerificationService`: OMEMO device inventory, trust state, and
   fingerprint presentation.
+- `TrixDevicePassportService`: server-synced current-device approval state,
+  approval requests, directory claims, notice dismissals, and reset notices.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
 - `TrixCallControlService`: LiveKit token minting, TURN credentials, and active
   call authorization through the Trix control plane.
@@ -180,6 +182,17 @@ validating the current XMPP password through `check_password` and then calling
 loopback `change_password`; request bodies must stay out of proxy and service
 logs.
 
+Device Passport is handled by `apps/trix-device-passport`, a separate Rust
+service from `trix-admin-api` and from the Python invite wrapper. It stores
+SQLite-backed current-device state, approval requests, trust generations,
+directory claims, notice dismissals, and scrubbed audit events. App routes
+authenticate with the signed-in XMPP account. Operator reset is a separate
+bearer-protected route that increments the trust generation, invalidates pending
+approvals, and emits a high-severity directory claim. The service stores
+fingerprint hashes and friendly device labels only; it must not store OMEMO
+private material, raw fingerprints, account passwords, APNs tokens, credentials,
+media keys, or decrypted chat content.
+
 ## Multidevice Model
 
 A user may have multiple devices. Each device has its own OMEMO identity and
@@ -188,9 +201,17 @@ local encryption state.
 For Trix MVP this means:
 
 - Logging in on a new device is not equivalent to silently trusting that device.
+- A new current device stays read-only until an already trusted device approves
+  the Device Passport challenge or an operator reset creates a new root
+  generation.
 - New or changed devices must be visible in the UI.
 - The user needs understandable fingerprint/trust state before treating private
   chats as production-ready.
+- Server-synced Device Passport claims are not enough to expand future OMEMO
+  fanout. A contact may auto-trust a new device only after the Apple client ties
+  the claim to a previously trusted device through an OMEMO-encrypted approval
+  descriptor and confirms refreshed MartinOMEMO identity state for the claimed
+  device id and fingerprint hash.
 - Account recovery and device replacement must be documented as separate flows
   from login.
 

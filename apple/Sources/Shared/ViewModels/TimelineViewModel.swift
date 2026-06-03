@@ -256,6 +256,10 @@ final class TimelineViewModel: ObservableObject {
         replyTarget = nil
     }
 
+    func blockSend(reason: String) {
+        errorMessage = reason
+    }
+
     func beginThread(from item: TrixTimelineItem) {
         guard !item.isRetracted else {
             errorMessage = TrixClientError.invalidMessageReference.trixUserFacingMessage

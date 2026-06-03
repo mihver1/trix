@@ -9,11 +9,11 @@ RUN cargo build --release --bin "${TRIX_BIN}"
 FROM debian:bookworm-slim
 
 ARG TRIX_BIN=trix-push-gateway
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --home /nonexistent --shell /usr/sbin/nologin trix
+RUN mkdir -p /etc/ssl/certs /var/lib/trix-device-passport \
+    && useradd --system --home /nonexistent --shell /usr/sbin/nologin trix \
+    && chown trix /var/lib/trix-device-passport
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /app/target/release/${TRIX_BIN} /usr/local/bin/trix-service
 USER trix
 

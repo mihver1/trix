@@ -38,6 +38,9 @@ been removed from the active repo surface.
   push component used by the XMPP deployment.
 - `apps/trix-call-control/` contains the private call-control API for LiveKit
   token minting, TURN credential issuance, and XMPP membership checks.
+- `apps/trix-device-passport/` contains the private Device Passport API for
+  server-synced device approval state, reset notices, directory claims, and
+  scrubbed audit records.
 - `crates/trix-push/` contains APNs payload/client support for the push gateway.
 - `docs/architecture.md` explains the XMPP + OMEMO direction.
 - `docs/security.md` captures the private deployment threat model.
@@ -121,6 +124,26 @@ TRIX_TURN_SHARED_SECRET='...' \
 cargo run -p trix-call-control
 ```
 
+## Run Device Passport
+
+Device Passport syncs device approval state without becoming the cryptographic
+source of OMEMO trust. Use deployment-local secrets only.
+
+```bash
+TRIX_DEVICE_PASSPORT_OPERATOR_TOKEN="$(openssl rand -hex 32)" \
+cargo run -p trix-device-passport
+```
+
+For local API smoke without real ejabberd credentials, add
+`TRIX_DEVICE_PASSPORT_DRY_RUN_AUTH=1` and a temporary
+`TRIX_DEVICE_PASSPORT_DB_PATH`.
+
+The self-contained deploy smoke is:
+
+```bash
+server/xmpp/scripts/device-passport-smoke.sh
+```
+
 ## MVP Status
 
 Current completed MVP surface:
@@ -134,6 +157,10 @@ Current completed MVP surface:
 - Directory-backed DM/group creation.
 - Centralized operator control plane plus the local macOS admin app/backend.
 - Push notifications through APNs without plaintext payloads.
+- Device Passport deploy slice: server-synced approval requests, trust
+  generations, directory claims, dismissable notices, operator reset, Apple
+  read-only pending-device gate, encrypted approval descriptors, and
+  OMEMO-provenance guardrails for auto-trust.
 - Persistent encrypted DM/group sync and signed macOS process relaunch smoke.
 - DM video-call and group voice-room scaffolding with LiveKit media E2EE.
 - TestFlight archive path for the new iOS and macOS clients.
@@ -143,9 +170,9 @@ Not production-ready:
 - Encrypted calls still need the full signed-device launch gate: DM video,
   CallKit/PushKit answer, bidirectional media, reconnect, group voice with three
   and ten participants, forced TURN relay, and log audit.
-- Real signed two-device OMEMO trust proof is still pending. The app exposes
-  device state and visual fingerprints, but signed two-device validation is not
-  closed.
+- Signed Device Passport live smoke is still pending: same-account two-device
+  approval, third-account prior-trust auto-apply, no-prior-trust pending notice,
+  and operator reset notice/log audit.
 - Server-side OMEMO key backup/recovery and older sender-side self-history
   backfill remain blocked until a reviewed MartinOMEMO/libsignal path exists.
 
@@ -159,3 +186,4 @@ Not production-ready:
 - [server/xmpp/](server/xmpp/)
 - [apple/README.md](apple/README.md)
 - [apps/trix-push-gateway/README.md](apps/trix-push-gateway/README.md)
+- [apps/trix-device-passport/README.md](apps/trix-device-passport/README.md)

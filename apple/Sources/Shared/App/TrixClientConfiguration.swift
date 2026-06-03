@@ -4,6 +4,7 @@ enum TrixClientConfiguration {
     private static let defaultHomeserverURL = URL(string: "https://trix.selfhost.ru")!
     private static let defaultRegistrationAPIBaseURL = URL(string: "https://trix.selfhost.ru")!
     private static let defaultCallControlAPIBaseURL = URL(string: "https://trix.selfhost.ru")!
+    private static let defaultDevicePassportAPIBaseURL = URL(string: "https://trix.selfhost.ru")!
 
     static var homeserverURL: URL {
         homeserverURL(environment: ProcessInfo.processInfo.environment)
@@ -15,6 +16,10 @@ enum TrixClientConfiguration {
 
     static var callControlAPIBaseURL: URL {
         callControlAPIBaseURL(environment: ProcessInfo.processInfo.environment)
+    }
+
+    static var devicePassportAPIBaseURL: URL {
+        devicePassportAPIBaseURL(environment: ProcessInfo.processInfo.environment)
     }
 
     static let serverName = "trix.selfhost.ru"
@@ -50,6 +55,14 @@ enum TrixClientConfiguration {
         return TrixEnvironmentConfiguration.url(
             environmentKey: "TRIX_CALL_CONTROL_BASE_URL",
             fallback: defaultCallControlAPIBaseURL,
+            environment: environment
+        )
+    }
+
+    static func devicePassportAPIBaseURL(environment: [String: String]) -> URL {
+        TrixEnvironmentConfiguration.url(
+            environmentKey: "TRIX_DEVICE_PASSPORT_BASE_URL",
+            fallback: defaultDevicePassportAPIBaseURL,
             environment: environment
         )
     }

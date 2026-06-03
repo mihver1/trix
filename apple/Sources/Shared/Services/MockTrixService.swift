@@ -19,6 +19,7 @@ actor MockTrixService: TrixService {
     private var notificationProfilesByAccountID: [String: TrixRoomNotificationProfileSnapshot]
     private var typingUserIDsByRoomID: [String: [String]]
     private var callDescriptorsByRoomID: [String: [TrixReceivedCallDescriptor]]
+    private var devicePassportDescriptors: [TrixReceivedDevicePassportDescriptor]
     private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState]
     private var readMarkerStateRequests: Int
     private var restoreError: TrixClientError?
@@ -84,6 +85,7 @@ actor MockTrixService: TrixService {
         ]
         self.typingUserIDsByRoomID = [:]
         self.callDescriptorsByRoomID = [:]
+        self.devicePassportDescriptors = []
         self.readMarkersByRoomAndUserID = [:]
         self.readMarkerStateRequests = 0
         self.restoreError = restoreError
@@ -827,6 +829,67 @@ actor MockTrixService: TrixService {
         )
         callDescriptorsByRoomID[roomID, default: []].append(received)
         return received
+    }
+
+    func devicePassportDescriptors(session: TrixSession) async throws -> [TrixReceivedDevicePassportDescriptor] {
+        devicePassportDescriptors
+    }
+
+    func sendDevicePassportApprovalDescriptor(
+        _ descriptor: TrixDevicePassportApprovalDescriptor,
+        session: TrixSession
+    ) async throws -> [TrixReceivedDevicePassportDescriptor] {
+        guard !roomSummaries.isEmpty else {
+            return []
+        }
+
+        let senderFingerprint = Self.mockFingerprint(for: descriptor.approvedByDeviceID)
+        let sent = roomSummaries.map { room in
+            TrixReceivedDevicePassportDescriptor(
+                id: "$mock-device-passport-\(UUID().uuidString)",
+                roomID: room.id,
+                senderID: session.userID,
+                senderFingerprint: senderFingerprint,
+                timestamp: Date(),
+                descriptor: descriptor,
+                isLocalEcho: true
+            )
+        }
+        devicePassportDescriptors.append(contentsOf: sent)
+        return sent
+    }
+
+    func appendRemoteDevicePassportDescriptor(
+        _ descriptor: TrixDevicePassportApprovalDescriptor,
+        roomID: String,
+        senderID: String,
+        senderFingerprint: String
+    ) throws -> TrixReceivedDevicePassportDescriptor {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let received = TrixReceivedDevicePassportDescriptor(
+            id: "$mock-remote-device-passport-\(UUID().uuidString)",
+            roomID: roomID,
+            senderID: senderID,
+            senderFingerprint: senderFingerprint,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: false
+        )
+        devicePassportDescriptors.append(received)
+        return received
+    }
+
+    func devicePassportClaimProof(
+        for claim: TrixDevicePassportDirectoryClaim,
+        session: TrixSession
+    ) async throws -> TrixDevicePassportClaimProof? {
+        if devicePassportDescriptors.isEmpty {
+            return nil
+        }
+        return TrixDevicePassportClaimProof.proof(for: claim, descriptors: devicePassportDescriptors)
     }
 
     func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {

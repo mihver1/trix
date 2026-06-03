@@ -181,6 +181,12 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let payload: Data
     }
 
+    private struct EncryptedDevicePassportDescriptorEnvelope: Codable, Equatable, Sendable {
+        let type: String
+        let version: Int
+        let payload: Data
+    }
+
     private struct DecodedTimelineContent {
         let body: String
         let attachment: TrixTimelineAttachment?
@@ -702,6 +708,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
     private var callDescriptorHistory: [String: [String: [TrixReceivedCallDescriptor]]] = [:]
+    private var devicePassportDescriptorHistory: [String: [TrixReceivedDevicePassportDescriptor]] = [:]
     private let timelineCacheStore: TrixTimelineCacheStore
     private let roomSummaryCacheStore: TrixRoomSummaryCacheStore
     private let groupRoomCacheStore: TrixGroupRoomCacheStore
@@ -715,6 +722,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private static let mamArchiveUnfilteredFallbackMaxPages = 50
     private static let mamArchiveUnfilteredFallbackTargetEvents = 50
     private static let maxCachedCallDescriptors = 100
+    private static let maxCachedDevicePassportDescriptors = 200
     private static let typingRecordLifetime: TimeInterval = 6
     private static let xmppConnectionTimeout: TimeInterval = 15
     private static let mucJoinTimeout: TimeInterval = 15
@@ -1858,6 +1866,54 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         session: TrixSession
     ) async throws -> TrixReceivedCallDescriptor {
         try await sendCallDescriptor(.keyRotation(rotation), roomID: roomID, session: session)
+    }
+
+    func devicePassportDescriptors(session: TrixSession) async throws -> [TrixReceivedDevicePassportDescriptor] {
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let knownRooms = (try? await rooms(session: session)) ?? []
+        for room in knownRooms where room.isEncrypted {
+            _ = try? await timeline(roomID: room.id, session: session)
+        }
+        return devicePassportDescriptorItems(accountJID: accountJID)
+    }
+
+    func sendDevicePassportApprovalDescriptor(
+        _ descriptor: TrixDevicePassportApprovalDescriptor,
+        session: TrixSession
+    ) async throws -> [TrixReceivedDevicePassportDescriptor] {
+        let connection = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let body = try Self.encodedDevicePassportDescriptor(descriptor)
+        let knownRooms = try await rooms(session: session)
+        let encryptedRooms = knownRooms.filter { $0.isEncrypted }
+        var sent: [TrixReceivedDevicePassportDescriptor] = []
+
+        for room in encryptedRooms {
+            if let item = try? await sendDevicePassportDescriptor(
+                descriptor,
+                body: body,
+                roomID: room.id,
+                accountJID: accountJID,
+                session: session,
+                connection: connection
+            ) {
+                sent.append(item)
+            }
+        }
+
+        if sent.isEmpty, !encryptedRooms.isEmpty {
+            throw TrixClientError.devicePassportClaimUnverified
+        }
+
+        return sent
+    }
+
+    func devicePassportClaimProof(
+        for claim: TrixDevicePassportDirectoryClaim,
+        session: TrixSession
+    ) async throws -> TrixDevicePassportClaimProof? {
+        let descriptors = try await devicePassportDescriptors(session: session)
+        return TrixDevicePassportClaimProof.proof(for: claim, descriptors: descriptors)
     }
 
     func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
@@ -3319,7 +3375,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
         guard let body = decoded.body?.trimmingCharacters(in: .whitespacesAndNewlines),
               !body.isEmpty,
-              Self.decodedCallDescriptor(from: body) == nil else {
+              Self.decodedCallDescriptor(from: body) == nil,
+              Self.decodedDevicePassportDescriptor(from: body) == nil else {
             return nil
         }
         let content = Self.decodedTimelineContent(from: body)
@@ -3361,12 +3418,14 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         }
 
         let decoded: Message
+        let senderFingerprint: String?
         let decodeResult = senderJID
             .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
             ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
         switch decodeResult {
-        case .successMessage(let decryptedMessage, _):
+        case .successMessage(let decryptedMessage, let fingerprint):
             decoded = decryptedMessage
+            senderFingerprint = fingerprint
         case .successTransportKey, .failure:
             return nil
         }
@@ -3389,6 +3448,19 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 isLocalEcho: isLocalEcho
             )
             storeCallDescriptors([item], accountJID: accountJID, roomID: roomID)
+            return nil
+        }
+        if let descriptor = Self.decodedDevicePassportDescriptor(from: body) {
+            let item = TrixReceivedDevicePassportDescriptor(
+                id: decoded.id ?? fallbackID ?? "xmpp-device-passport-\(UUID().uuidString)",
+                roomID: roomID,
+                senderID: isLocalEcho ? accountJID : resolvedSenderJID,
+                senderFingerprint: senderFingerprint,
+                timestamp: timestamp,
+                descriptor: descriptor,
+                isLocalEcho: isLocalEcho
+            )
+            storeDevicePassportDescriptors([item], accountJID: accountJID)
             return nil
         }
 
@@ -3779,6 +3851,24 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         callDescriptorHistory[accountKey] = accountDescriptors
     }
 
+    private func devicePassportDescriptorItems(accountJID: String) -> [TrixReceivedDevicePassportDescriptor] {
+        devicePassportDescriptorHistory[accountJID.lowercased()] ?? []
+    }
+
+    private func storeDevicePassportDescriptors(
+        _ descriptors: [TrixReceivedDevicePassportDescriptor],
+        accountJID: String
+    ) {
+        guard !descriptors.isEmpty else {
+            return
+        }
+
+        let accountKey = accountJID.lowercased()
+        let existingDescriptors = devicePassportDescriptorHistory[accountKey] ?? []
+        let mergedDescriptors = Array(Self.mergedDevicePassportDescriptors(existingDescriptors, descriptors).suffix(Self.maxCachedDevicePassportDescriptors))
+        devicePassportDescriptorHistory[accountKey] = mergedDescriptors
+    }
+
     @discardableResult
     private func loadCachedTimelineItems(accountJID: String, roomID: String) -> Int {
         let accountKey = accountJID.lowercased()
@@ -3944,6 +4034,75 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         )
         storeCallDescriptors([received], accountJID: accountJID, roomID: roomID)
         updateGroupActivity(roomID: roomID, accountJID: accountJID, at: received.timestamp)
+        return received
+    }
+
+    private func sendDevicePassportDescriptor(
+        _ descriptor: TrixDevicePassportApprovalDescriptor,
+        body: String,
+        roomID: String,
+        accountJID: String,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> TrixReceivedDevicePassportDescriptor {
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        let messageID = "trix-device-passport-\(descriptor.claimID)-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.to = JID(normalizedRoomID)
+        message.body = body
+
+        if Self.isMUCJID(normalizedRoomID) {
+            let room = try await joinedGroupRoom(roomID: normalizedRoomID, session: session, connection: connection)
+            let recipients = try await validatedGroupEncryptionRecipients(
+                room: room,
+                accountJID: accountJID,
+                session: session,
+                connection: connection
+            )
+            message.type = .groupchat
+            let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+            try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+            try await connection.mucModule.write(stanza: encryptedMessage)
+        } else {
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+                _ = try? await refreshPeerDeviceIdentities(userID: normalizedRoomID, session: session)
+                guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+                    throw TrixClientError.omemoDeviceTrustRequired
+                }
+                return try await sendDevicePassportDescriptor(
+                    descriptor,
+                    body: body,
+                    roomID: normalizedRoomID,
+                    accountJID: accountJID,
+                    session: session,
+                    connection: connection
+                )
+            }
+            message.type = .chat
+            message.messageDelivery = .request
+            let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: normalizedRoomID, connection: connection)
+            encryptedMessage.messageDelivery = .request
+            try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+            try await connection.omemoStack.module.write(stanza: encryptedMessage)
+        }
+
+        let senderFingerprint = connection.omemoStack.store.identityFingerprint(
+            forAddress: SignalAddress(
+                name: accountJID,
+                deviceId: Int32(bitPattern: connection.omemoStack.store.localRegistrationId())
+            )
+        )
+        let received = TrixReceivedDevicePassportDescriptor(
+            id: messageID,
+            roomID: normalizedRoomID,
+            senderID: accountJID,
+            senderFingerprint: senderFingerprint,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: true
+        )
+        storeDevicePassportDescriptors([received], accountJID: accountJID)
         return received
     }
 
@@ -4997,6 +5156,32 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         default:
             return nil
         }
+    }
+
+    private static func encodedDevicePassportDescriptor(_ descriptor: TrixDevicePassportApprovalDescriptor) throws -> String {
+        let envelope = EncryptedDevicePassportDescriptorEnvelope(
+            type: TrixDevicePassportApprovalDescriptor.contentType,
+            version: 1,
+            payload: try JSONEncoder().encode(descriptor)
+        )
+        let data = try JSONEncoder().encode(envelope)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw TrixClientError.devicePassportClaimUnverified
+        }
+
+        return json
+    }
+
+    private static func decodedDevicePassportDescriptor(from sourceJSON: String?) -> TrixDevicePassportApprovalDescriptor? {
+        guard let data = sourceJSON?.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(EncryptedDevicePassportDescriptorEnvelope.self, from: data),
+              envelope.version == 1,
+              envelope.type == TrixDevicePassportApprovalDescriptor.contentType,
+              !envelope.payload.isEmpty else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(TrixDevicePassportApprovalDescriptor.self, from: envelope.payload)
     }
 
     private static func callDescriptorContentType(_ descriptor: TrixCallDescriptor) -> String {
@@ -6181,6 +6366,27 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         _ rhs: [TrixReceivedCallDescriptor]
     ) -> [TrixReceivedCallDescriptor] {
         var byID: [String: TrixReceivedCallDescriptor] = [:]
+        for descriptor in lhs {
+            byID[descriptor.id] = descriptor
+        }
+        for descriptor in rhs {
+            byID[descriptor.id] = descriptor
+        }
+
+        return byID.values.sorted { first, second in
+            if first.timestamp != second.timestamp {
+                return first.timestamp < second.timestamp
+            }
+
+            return first.id < second.id
+        }
+    }
+
+    private static func mergedDevicePassportDescriptors(
+        _ lhs: [TrixReceivedDevicePassportDescriptor],
+        _ rhs: [TrixReceivedDevicePassportDescriptor]
+    ) -> [TrixReceivedDevicePassportDescriptor] {
+        var byID: [String: TrixReceivedDevicePassportDescriptor] = [:]
         for descriptor in lhs {
             byID[descriptor.id] = descriptor
         }

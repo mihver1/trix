@@ -12,6 +12,28 @@ protocol TrixRegistrationService: Sendable {
     func changePassword(_ request: TrixPasswordChangeRequest, session: TrixSession) async throws -> TrixPasswordChangeResult
 }
 
+protocol TrixDevicePassportService: Sendable {
+    func upsertCurrentDevice(_ request: TrixDevicePassportCurrentDeviceRequest, session: TrixSession) async throws -> TrixDevicePassportDevice
+    func state(session: TrixSession, deviceID: String?) async throws -> TrixDevicePassportSnapshot
+    func createApprovalRequest(deviceID: String, session: TrixSession) async throws -> TrixDevicePassportApprovalRequest
+    func approveApprovalRequest(id: String, approverDeviceID: String, session: TrixSession) async throws -> TrixDevicePassportApproveResult
+    func declineApprovalRequest(id: String, approverDeviceID: String, session: TrixSession) async throws -> TrixDevicePassportApprovalRequest
+    func directoryClaims(since cursor: Int64, session: TrixSession) async throws -> TrixDevicePassportDirectoryClaimsPage
+    func dismissNotice(targetUserID: String, severity: TrixDevicePassportNoticeSeverity, session: TrixSession) async throws
+}
+
+protocol TrixDevicePassportDescriptorService: Sendable {
+    func devicePassportDescriptors(session: TrixSession) async throws -> [TrixReceivedDevicePassportDescriptor]
+    func sendDevicePassportApprovalDescriptor(
+        _ descriptor: TrixDevicePassportApprovalDescriptor,
+        session: TrixSession
+    ) async throws -> [TrixReceivedDevicePassportDescriptor]
+    func devicePassportClaimProof(
+        for claim: TrixDevicePassportDirectoryClaim,
+        session: TrixSession
+    ) async throws -> TrixDevicePassportClaimProof?
+}
+
 protocol TrixStickerImportService: Sendable {
     func resolveTelegramStickerPack(_ reference: String, session: TrixSession) async throws -> TrixTelegramStickerPackImport
     func downloadTelegramStickerFile(_ sticker: TrixTelegramStickerImportItem, session: TrixSession) async throws -> TrixTelegramStickerFileDownload
@@ -215,4 +237,4 @@ protocol TrixMediaCallService: Sendable {
     func disconnect(callID: String) async
 }
 
-typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService & TrixRoomNotificationProfileService & TrixClientStateService & TrixCallDescriptorService
+typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService & TrixRoomNotificationProfileService & TrixClientStateService & TrixCallDescriptorService & TrixDevicePassportDescriptorService

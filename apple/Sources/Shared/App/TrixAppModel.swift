@@ -73,10 +73,12 @@ final class TrixAppModel: ObservableObject {
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
     let deviceVerificationViewModel: DeviceVerificationViewModel
+    let devicePassportViewModel: DevicePassportViewModel
     let callViewModel: TrixCallViewModel
 
     private let sessionStore: TrixSessionStore
     private let registrationService: TrixRegistrationService
+    private let devicePassportService: TrixDevicePassportService
     private let stickerImportService: TrixStickerImportService
     private let stickerLibraryStore: TrixStickerLibraryStore
     private let mediaCacheStore: TrixMediaCacheStore
@@ -99,6 +101,7 @@ final class TrixAppModel: ObservableObject {
     init(
         sessionStore: TrixSessionStore = KeychainTrixSessionStore(),
         registrationService: TrixRegistrationService = HTTPInviteRegistrationService(),
+        devicePassportService: TrixDevicePassportService = HTTPDevicePassportService(),
         stickerImportService: TrixStickerImportService = HTTPStickerImportService(),
         stickerLibraryStore: TrixStickerLibraryStore = TrixStickerLibraryStore(),
         mediaCacheStore: TrixMediaCacheStore = TrixMediaCacheStore(),
@@ -108,6 +111,7 @@ final class TrixAppModel: ObservableObject {
     ) {
         self.sessionStore = sessionStore
         self.registrationService = registrationService
+        self.devicePassportService = devicePassportService
         self.stickerImportService = stickerImportService
         self.stickerLibraryStore = stickerLibraryStore
         self.mediaCacheStore = mediaCacheStore
@@ -118,6 +122,7 @@ final class TrixAppModel: ObservableObject {
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
+        self.devicePassportViewModel = DevicePassportViewModel()
         self.callViewModel = TrixCallViewModel(callDescriptorService: trixService)
         startNetworkMonitor()
     }
@@ -248,6 +253,7 @@ final class TrixAppModel: ObservableObject {
             reportingCallStateErrors: true
         )
         await syncRoomNotificationProfilesFromServerIfPossible(for: session)
+        await syncDevicePassportState()
         await syncAPNsRegistrationIfPossible()
         await syncVoIPPushRegistrationIfPossible()
     }
@@ -322,6 +328,7 @@ final class TrixAppModel: ObservableObject {
             loadRoomNotificationProfiles(for: authenticatedSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
+            await syncDevicePassportState()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
             await syncVoIPPushRegistrationIfPossible()
@@ -391,6 +398,7 @@ final class TrixAppModel: ObservableObject {
 
             await reloadRooms()
             await reloadDeviceVerificationStatus()
+            await syncDevicePassportState()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
             await syncVoIPPushRegistrationIfPossible()
@@ -646,6 +654,7 @@ final class TrixAppModel: ObservableObject {
     private func finishSessionRestoreInBackground() async {
         await reloadRooms()
         await reloadDeviceVerificationStatus()
+        await syncDevicePassportState()
         if let session {
             await syncRoomNotificationProfilesFromServerIfPossible(for: session)
         }
@@ -701,6 +710,7 @@ final class TrixAppModel: ObservableObject {
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
         await refreshCallStateForRooms(reportingErrors: reportingCallStateErrors)
+        await syncDevicePassportDirectoryClaims()
 
         if reloadSelectedTimeline, let selectedRoomID {
             await timelineViewModel.load(
@@ -768,6 +778,10 @@ final class TrixAppModel: ObservableObject {
         metadata: TrixTextMessageSendMetadata? = nil
     ) async -> Bool {
         guard let session, let selectedRoomID else {
+            return false
+        }
+        guard !devicePassportViewModel.isCurrentDeviceReadOnly else {
+            timelineViewModel.blockSend(reason: TrixClientError.devicePassportApprovalRequired.trixUserFacingMessage)
             return false
         }
 
@@ -957,6 +971,10 @@ final class TrixAppModel: ObservableObject {
 
     func sendAttachment(_ attachment: TrixAttachmentUpload) async {
         guard let session, let selectedRoomID else {
+            return
+        }
+        guard !devicePassportViewModel.isCurrentDeviceReadOnly else {
+            timelineViewModel.blockSend(reason: TrixClientError.devicePassportApprovalRequired.trixUserFacingMessage)
             return
         }
 
@@ -1611,6 +1629,61 @@ final class TrixAppModel: ObservableObject {
         await deviceVerificationViewModel.reload(session: session, service: trixService)
     }
 
+    func syncDevicePassportState() async {
+        guard let session else {
+            devicePassportViewModel.clear()
+            return
+        }
+
+        await devicePassportViewModel.syncCurrentDevice(
+            session: session,
+            deviceVerificationService: trixService,
+            passportService: devicePassportService
+        )
+    }
+
+    func syncDevicePassportDirectoryClaims() async {
+        guard let session else {
+            return
+        }
+
+        await devicePassportViewModel.syncDirectoryClaims(
+            session: session,
+            passportService: devicePassportService,
+            descriptorService: trixService,
+            deviceVerificationService: trixService
+        )
+    }
+
+    func approveDevicePassportRequest(_ request: TrixDevicePassportApprovalRequest) async {
+        guard let session else {
+            return
+        }
+
+        await devicePassportViewModel.approve(
+            request,
+            session: session,
+            passportService: devicePassportService,
+            descriptorService: trixService
+        )
+    }
+
+    func declineDevicePassportRequest(_ request: TrixDevicePassportApprovalRequest) async {
+        guard let session else {
+            return
+        }
+
+        await devicePassportViewModel.decline(request, session: session, passportService: devicePassportService)
+    }
+
+    func dismissDevicePassportNotice(_ notice: TrixDevicePassportNotice) async {
+        guard let session else {
+            return
+        }
+
+        await devicePassportViewModel.dismissNotice(notice, session: session, passportService: devicePassportService)
+    }
+
     func requestDeviceVerification() async {
         guard let session else {
             return
@@ -2098,6 +2171,7 @@ final class TrixAppModel: ObservableObject {
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()
+        devicePassportViewModel.clear()
         callViewModel.clear()
     }
 }
@@ -2109,6 +2183,7 @@ extension TrixAppModel {
             return TrixAppModel(
                 sessionStore: TrixMockSessionStore(),
                 registrationService: MockInviteRegistrationService(),
+                devicePassportService: MockDevicePassportService(),
                 stickerImportService: MockStickerImportService(),
                 trixService: MockTrixService()
             )

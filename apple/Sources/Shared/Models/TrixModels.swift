@@ -2426,6 +2426,9 @@ enum TrixClientError: LocalizedError {
     case readMarkerUnavailable
     case invalidMessageReference
     case invalidMentionTarget
+    case devicePassportUnavailable
+    case devicePassportApprovalRequired
+    case devicePassportClaimUnverified
 
     var errorDescription: String? {
         switch self {
@@ -2563,6 +2566,12 @@ enum TrixClientError: LocalizedError {
             return "The referenced message is not available."
         case .invalidMentionTarget:
             return "Mention only known room members."
+        case .devicePassportUnavailable:
+            return "Device confirmation could not be reached. Try again when Trix is online."
+        case .devicePassportApprovalRequired:
+            return "Confirm this device on another Trix device before sending private messages."
+        case .devicePassportClaimUnverified:
+            return "Device confirmation could not be verified locally."
         }
     }
 }

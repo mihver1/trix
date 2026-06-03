@@ -380,7 +380,7 @@ struct TrixTimelineView: View {
                 return
             }
 
-            await dismissTimelineToast(matching: message)
+            dismissTimelineToast(matching: message)
         }
         .task(id: model.stickerImportMessage) {
             guard let message = model.stickerImportMessage else {
@@ -392,7 +392,7 @@ struct TrixTimelineView: View {
                 return
             }
 
-            await dismissStickerImportMessage(matching: message)
+            dismissStickerImportMessage(matching: message)
         }
         .onDisappear {
             typingPauseTask?.cancel()
@@ -401,12 +401,19 @@ struct TrixTimelineView: View {
     }
 
     private var canSendEncrypted: Bool {
+        guard devicePassportBlockMessage == nil else {
+            return false
+        }
         if room.kind == .group,
            let availability = currentAttachmentSendAvailability {
             return availability.canSend
         }
 
         return room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    private var devicePassportBlockMessage: String? {
+        model.devicePassportViewModel.currentDeviceBlockMessage
     }
 
     private var currentUserID: String? {
@@ -695,6 +702,21 @@ struct TrixTimelineView: View {
                 )
             }
 
+            if let devicePassportBlockMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.shield")
+                        .foregroundStyle(.orange)
+                    Text(devicePassportBlockMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
             HStack(spacing: 10) {
                 Button {
                     fileImportError = nil
@@ -725,7 +747,7 @@ struct TrixTimelineView: View {
                 .disabled(editingItem != nil)
                 .help("Stickers")
 
-                TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
+                TextField(devicePassportBlockMessage == nil ? (canSendEncrypted ? "Message" : "OMEMO required") : "Device confirmation required", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -774,6 +796,12 @@ struct TrixTimelineView: View {
                 title: "No messages yet",
                 systemImage: "bubble.left.and.text.bubble.right",
                 message: "Encrypted messages will appear here after sync."
+            )
+        } else if let devicePassportBlockMessage {
+            TrixEmptyStateView(
+                title: "Device confirmation required",
+                systemImage: "exclamationmark.shield",
+                message: devicePassportBlockMessage
             )
         } else {
             TrixEmptyStateView(
@@ -870,6 +898,9 @@ struct TrixTimelineView: View {
     }
 
     private var canSendEncryptedAttachments: Bool {
+        guard devicePassportBlockMessage == nil else {
+            return false
+        }
         guard let availability = timelineViewModel.attachmentSendAvailability,
               availability.roomID == room.id else {
             return false
@@ -4301,7 +4332,7 @@ private struct TrixStickerPickerView: View {
                 return
             }
 
-            await dismissStickerImportMessage(matching: message)
+            dismissStickerImportMessage(matching: message)
         }
         .onAppear(perform: ensureSelectedStickerPack)
         .onChange(of: model.stickerPacks.map(\.id)) { oldIDs, newIDs in

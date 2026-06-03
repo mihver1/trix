@@ -16,8 +16,8 @@ committed.
 
 ## Files
 
-- `docker-compose.yml`: ejabberd by default, plus `push-gateway`, `media`, and
-  `prosody-fallback` profiles.
+- `docker-compose.yml`: ejabberd by default, plus `push-gateway`, `media`,
+  `device-passport`, `admin`, and `prosody-fallback` profiles.
 - `certs/README.md`: keeps the local certificate mount directory present without
   committing real certificates or private keys.
 - `ejabberd.yml`: private non-federated ejabberd config for
@@ -46,6 +46,10 @@ committed.
 - `scripts/invite-registration-smoke.sh`: dry-run smoke for invite creation,
   redemption, single-use replay rejection, password changes, and fake Telegram
   sticker import without real ejabberd or Telegram credentials.
+- `scripts/device-passport-smoke.sh`: dry-run smoke for the Device Passport
+  service covering health, current-device registration, operator reset, approval
+  request flow, directory-claim pagination, notice dismissal, and state sync
+  without real ejabberd credentials.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
@@ -54,6 +58,9 @@ committed.
 - `../../apps/trix-admin-api`: authenticated loopback admin API for the native
   macOS admin app. It wraps ejabberd user operations, push test requests, media
   storage status, logs/metrics summaries, and feature-flag storage.
+- `../../apps/trix-device-passport`: authenticated app-facing Device Passport
+  API for current-device registration, approval requests, directory claims,
+  notice dismissals, operator resets, and scrubbed audit/state storage.
 
 ## Default: ejabberd
 
@@ -76,6 +83,43 @@ Key decisions:
 
 OMEMO is client-side end-to-end encryption. This scaffold does not implement
 custom cryptography, custom key exchange, or server-side message encryption.
+
+## Device Passport Profile
+
+The optional `device-passport` Compose profile starts the app-facing
+Device Passport service on loopback port `8094`. It stores current-device state,
+approval requests, trust generations, directory claims, notice dismissals, and
+scrubbed audit events in SQLite. It stores fingerprint hashes and friendly
+device labels only, not OMEMO private material, raw fingerprints, passwords,
+APNs tokens, credentials, media keys, or decrypted content.
+
+```bash
+cd server/xmpp
+TRIX_DEVICE_PASSPORT_OPERATOR_TOKEN="$(openssl rand -hex 32)" \
+podman compose --profile device-passport up -d device-passport
+```
+
+App routes authenticate with the signed-in XMPP account through ejabberd
+`check_password`. The operator reset route uses the separate
+`TRIX_DEVICE_PASSPORT_OPERATOR_TOKEN`; if it is unset, reset is unavailable.
+The Compose profile sets `TRIX_DEVICE_PASSPORT_ALLOW_NON_LOOPBACK=1` only for
+the container-internal bind; the host publish remains loopback-bound by default.
+Keep raw `8094` closed externally and publish only reviewed private app routes
+through TLS/reverse-proxy policy.
+
+For local code changes, run the self-contained dry-run smoke from the repo root:
+
+```bash
+server/xmpp/scripts/device-passport-smoke.sh
+```
+
+Server-synced passport state is intentionally not enough to expand OMEMO
+fanout. Directory claims are marked `proof_required=true`; Apple clients may
+auto-trust a new device only when an OMEMO-encrypted Device Passport approval
+descriptor is tied to a previously trusted approver device for that user and
+the refreshed MartinOMEMO identity state matches the claimed `device_id` plus
+`fingerprint_hash`. Without prior trust, recipients must show a pending
+first-contact/reset notice instead of silently trusting the new device.
 
 ## Media Calls Profile
 

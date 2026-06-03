@@ -93,6 +93,25 @@ trust UX only if the limitation is visible and tracked.
 The app should surface OMEMO device identity and trust state. It must not mark all
 devices trusted locally just to make encrypted sending easier.
 
+Device Passport reduces repeated manual trust for a small friends deployment,
+but it is not a server-only trust oracle. A newly logged-in current device stays
+read-only until an already trusted device for the same account approves the
+short visual challenge, or until an operator reset creates a new root
+generation. The server stores only approval state, trust generations, directory
+claims, notice dismissals, scrubbed audit events, friendly labels, device ids,
+and fingerprint hashes. It must not store OMEMO private material, raw
+fingerprints, passwords, APNs tokens, credentials, media keys, decrypted message
+bodies, or raw secrets.
+
+Contacts may auto-apply a normal Device Passport claim only after the Apple
+client decrypts an OMEMO-encrypted approval descriptor from a previously
+trusted device for that user and refreshes MartinOMEMO identity state to confirm
+the claimed `device_id` plus `fingerprint_hash`. A server-only claim, a claim
+from an untrusted approver device, a mismatched fingerprint hash, or a
+first-contact account with no prior trusted device must stay pending and
+visible instead of silently expanding future encrypted fanout. Operator reset
+claims are high-severity notices and require stronger user attention.
+
 The Apple Settings surface now shows the current account's OMEMO device list
 from the existing MartinOMEMO discovery/store path: current device, published
 account devices, device ids, active state, local trust state, and a short visual

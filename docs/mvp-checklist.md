@@ -194,6 +194,16 @@ copying old implementation details.
       through MartinOMEMO, active/trust state, a short visual fingerprint
       challenge, hidden technical fingerprints, and a manual per-device trust
       action. It does not silently trust new devices.
+- [x] Device Passport deploy slice. `apps/trix-device-passport` adds
+      SQLite-backed current-device state, approval requests, trust generations,
+      directory claims, notice dismissals, operator reset, and scrubbed audit
+      records. Apple syncs the current device, creates approval requests, shows
+      pending approvals and dismissable normal/reset notices, keeps pending
+      devices read-only, and blocks product composer sends until passport sync
+      reports an approved/reset-root state. Approved devices emit
+      OMEMO-encrypted Device Passport approval descriptors, and directory
+      claims still require that OMEMO-backed provenance before auto-trust;
+      server-only claims become visible pending notices.
 - [x] Repeatable local archive/TestFlight script path for the new XMPP Apple
       app targets.
 
@@ -374,6 +384,14 @@ copying old implementation details.
 - [x] Confirm untrusted or unknown device behavior is understandable.
 - [x] Confirm the app does not silently trust all devices.
 - [x] Confirm the composer blocks sending when required OMEMO state is missing.
+- [x] Confirm Device Passport server state cannot silently expand OMEMO fanout.
+      The checked-in claim processor rejects server-only claims, requires an
+      OMEMO-backed approval descriptor tied to the approving device id,
+      confirms the approver fingerprint belongs to an already trusted local
+      identity, refreshes MartinOMEMO identity state, and compares the refreshed
+      target fingerprint hash before calling the reviewed trust API.
+      First-contact recipients remain pending instead of silently trusting a
+      new device.
 - [x] Confirm recovery or reinstall limitations are visible and documented.
       Apple Settings now states that server-side OMEMO key recovery is not wired
       for this MartinOMEMO slice, reinstall/Keychain reset creates a new OMEMO
@@ -437,6 +455,20 @@ copying old implementation details.
       `apple/Sources/SharedFeatureFlags`, and the operator workflow is
       documented in `docs/feature-flags.md`.
 - [x] Keep admin credentials out of logs and repo files.
+- [x] Device Passport control-plane state exists as a separate Rust service from
+      `trix-admin-api` and the Python invite wrapper. It authenticates app
+      routes with the signed-in XMPP account, keeps operator reset behind a
+      separate bearer token, stores only fingerprint hashes and labels, rejects
+      weak placeholder operator tokens, and keeps its Compose profile
+      loopback-published by default.
+- [x] Device Passport service is deployed on `trix.selfhost.ru`. On 2026-06-03
+      `trix-device-passport` built from `/opt/trix-build`, started through the
+      `device-passport` Compose profile, exposed only `127.0.0.1:8094`, and
+      returned `status:ok` on the loopback health check. nginx proxies the
+      app-facing `/v1/device-passport/*` routes over HTTPS, leaves
+      `/v1/operator/device-passport/*` unpublished, and a disposable XMPP
+      account smoke proved authenticated current-device upsert plus state sync
+      before deleting the smoke account.
 
 ## Deferred MVP Items
 
@@ -499,6 +531,14 @@ copying old implementation details.
       credentials outside the repo. On 2026-05-10 `trix-push-gateway` built on
       the VPS, started healthy, exposed `127.0.0.1:8090` only, and connected to
       ejabberd as the private XEP-0114 component `push.trix.selfhost.ru`.
+- [ ] Signed Device Passport smoke. Still needs same-account two-device approval
+      on signed profiles, a third account with prior trust auto-applying the
+      OMEMO-backed claim, a no-prior-trust account showing only a pending
+      notice, and an operator reset path with strong notice plus scrubbed logs.
+      Local deploy readiness is covered by
+      `server/xmpp/scripts/device-passport-smoke.sh`, `cargo test -p
+      trix-device-passport`, and the Apple Device Passport tests; the remaining
+      item is signed live-device evidence.
 
 ## Current First-Slice Status
 

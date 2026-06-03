@@ -507,6 +507,30 @@ struct TrixSettingsView: View {
             }
 
             Section("Device Verification And Recovery") {
+                TrixDevicePassportStatusView(
+                    viewModel: model.devicePassportViewModel,
+                    refresh: {
+                        Task {
+                            await model.syncDevicePassportState()
+                        }
+                    },
+                    approve: { request in
+                        Task {
+                            await model.approveDevicePassportRequest(request)
+                        }
+                    },
+                    decline: { request in
+                        Task {
+                            await model.declineDevicePassportRequest(request)
+                        }
+                    },
+                    dismissNotice: { notice in
+                        Task {
+                            await model.dismissDevicePassportNotice(notice)
+                        }
+                    }
+                )
+
                 TrixDeviceVerificationStatusView(
                     viewModel: deviceVerificationViewModel,
                     requestVerification: {
