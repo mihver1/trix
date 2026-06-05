@@ -20,8 +20,9 @@ Relevant files:
 
 The app can create encrypted direct rooms by JID. Room-list directory results
 currently exclude the current user. Direct-message send paths require trusted
-OMEMO devices and `encodeOMEMOMessage(...)` includes the account JID in the
-recipient set.
+OMEMO devices. MartinOMEMO's built-in `forSelf` encode path includes trusted
+own devices in the encrypted stanza; do not add the account JID as a separate
+recipient just to force sender-side replay.
 
 ## Goal
 
@@ -93,4 +94,3 @@ git diff --check
 Also run a scrubbed `notes-to-self` live smoke when credentials are available.
 If self-JID OMEMO cannot be made safe with MartinOMEMO APIs, document the blocker
 instead of adding a plaintext/local-only workaround.
-

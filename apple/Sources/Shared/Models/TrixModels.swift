@@ -1461,6 +1461,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         case editState
         case retractionState
         case readState
+        case omemoRecipientKeyCount
     }
 
     let id: String
@@ -1478,6 +1479,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     let editState: TrixTimelineEditState?
     let retractionState: TrixTimelineRetractionState?
     let readState: TrixTimelineReadState
+    let omemoRecipientKeyCount: Int?
 
     init(
         id: String,
@@ -1494,7 +1496,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         thread: TrixThreadReference? = nil,
         editState: TrixTimelineEditState? = nil,
         retractionState: TrixTimelineRetractionState? = nil,
-        readState: TrixTimelineReadState = .empty
+        readState: TrixTimelineReadState = .empty,
+        omemoRecipientKeyCount: Int? = nil
     ) {
         self.id = id
         self.roomID = roomID
@@ -1511,6 +1514,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         self.editState = editState
         self.retractionState = retractionState
         self.readState = readState
+        self.omemoRecipientKeyCount = omemoRecipientKeyCount
     }
 
     init(from decoder: Decoder) throws {
@@ -1530,6 +1534,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         self.editState = try container.decodeIfPresent(TrixTimelineEditState.self, forKey: .editState)
         self.retractionState = try container.decodeIfPresent(TrixTimelineRetractionState.self, forKey: .retractionState)
         self.readState = try container.decodeIfPresent(TrixTimelineReadState.self, forKey: .readState) ?? .empty
+        self.omemoRecipientKeyCount = try container.decodeIfPresent(Int.self, forKey: .omemoRecipientKeyCount)
     }
 
     var isEdited: Bool {
@@ -1556,7 +1561,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1576,7 +1582,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1599,7 +1606,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1619,7 +1627,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1639,7 +1648,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: metadata.thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1659,7 +1669,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1679,7 +1690,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             thread: thread,
             editState: editState,
             retractionState: retractionState,
-            readState: readState
+            readState: readState,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
     }
 
@@ -1714,6 +1726,145 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         }
 
         return nil
+    }
+}
+
+struct TrixTimelineBackfillRequestDescriptor: Codable, Equatable, Sendable {
+    static let descriptorType = "com.softgrid.trix.xmpp.timeline-backfill-request"
+    static let schemaVersion = 1
+
+    let type: String
+    let version: Int
+    let roomID: String
+    let messageIDs: [String]
+    let requestedByDeviceID: String?
+
+    init(roomID: String, messageIDs: [String], requestedByDeviceID: String?) {
+        self.type = Self.descriptorType
+        self.version = Self.schemaVersion
+        self.roomID = roomID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.messageIDs = Self.normalizedMessageIDs(messageIDs)
+        self.requestedByDeviceID = requestedByDeviceID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
+    func encodedBody() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        guard let body = String(data: data, encoding: .utf8) else {
+            throw TrixClientError.messageMetadataUnavailable
+        }
+        return body
+    }
+
+    static func decoded(from body: String) -> TrixTimelineBackfillRequestDescriptor? {
+        guard let data = body.data(using: .utf8),
+              let descriptor = try? JSONDecoder().decode(TrixTimelineBackfillRequestDescriptor.self, from: data),
+              descriptor.type == descriptorType,
+              descriptor.version == schemaVersion,
+              !descriptor.roomID.isEmpty,
+              !descriptor.messageIDs.isEmpty else {
+            return nil
+        }
+        return descriptor
+    }
+
+    private static func normalizedMessageIDs(_ messageIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalizedIDs: [String] = []
+        for messageID in messageIDs {
+            let normalized = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalized.lowercased()
+            guard !normalized.isEmpty, seen.insert(key).inserted else {
+                continue
+            }
+            normalizedIDs.append(normalized)
+        }
+        return normalizedIDs
+    }
+}
+
+struct TrixTimelineBackfillResponseDescriptor: Codable, Equatable, Sendable {
+    static let descriptorType = "com.softgrid.trix.xmpp.timeline-backfill-response"
+    static let schemaVersion = 1
+
+    let type: String
+    let version: Int
+    let item: TrixTimelineBackfillItem
+
+    init(item: TrixTimelineItem) {
+        self.type = Self.descriptorType
+        self.version = Self.schemaVersion
+        self.item = TrixTimelineBackfillItem(item: item)
+    }
+
+    func encodedBody() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        guard let body = String(data: data, encoding: .utf8) else {
+            throw TrixClientError.messageMetadataUnavailable
+        }
+        return body
+    }
+
+    func timelineItem(accountJID: String, roomID: String? = nil) -> TrixTimelineItem {
+        item.timelineItem(accountJID: accountJID, roomID: roomID)
+    }
+
+    static func decoded(from body: String) -> TrixTimelineBackfillResponseDescriptor? {
+        guard let data = body.data(using: .utf8),
+              let descriptor = try? JSONDecoder().decode(TrixTimelineBackfillResponseDescriptor.self, from: data),
+              descriptor.type == descriptorType,
+              descriptor.version == schemaVersion else {
+            return nil
+        }
+        return descriptor
+    }
+}
+
+struct TrixTimelineBackfillItem: Codable, Equatable, Sendable {
+    let id: String
+    let roomID: String
+    let sender: String
+    let timestamp: Date
+    let body: String
+    let attachment: TrixTimelineAttachment?
+    let mentions: [TrixMentionReference]
+    let replyTo: TrixReplyReference?
+    let thread: TrixThreadReference?
+    let editState: TrixTimelineEditState?
+    let retractionState: TrixTimelineRetractionState?
+
+    init(item: TrixTimelineItem) {
+        self.id = item.id
+        self.roomID = item.roomID
+        self.sender = item.sender
+        self.timestamp = item.timestamp
+        self.body = item.body
+        self.attachment = item.attachment
+        self.mentions = item.mentions
+        self.replyTo = item.replyTo
+        self.thread = item.thread
+        self.editState = item.editState
+        self.retractionState = item.retractionState
+    }
+
+    func timelineItem(accountJID: String, roomID overrideRoomID: String? = nil) -> TrixTimelineItem {
+        let isLocalEcho = sender.caseInsensitiveCompare(accountJID) == .orderedSame
+        return TrixTimelineItem(
+            id: id,
+            roomID: overrideRoomID ?? roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: isLocalEcho ? .sent : nil,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState
+        )
     }
 }
 

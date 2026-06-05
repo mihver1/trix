@@ -59,4 +59,34 @@ final class TrixLocalProfileConfigurationTests: XCTestCase {
             "TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN": "1",
         ]))
     }
+
+    func testLiveSmokeRunnerRecognizesDMBackfillRepairMode() {
+        XCTAssertTrue(XMPPLiveSmokeRunner.supportsModeForTesting("dm-backfill-repair"))
+    }
+
+    func testTimelineRestartCanWarmPeerDeviceForDisposableAccounts() {
+        XCTAssertTrue(XMPPLiveSmokeRunner.canWarmPeerDeviceForTesting("timeline-restart"))
+    }
+
+    func testGroupTimelineRestartCanTrustAllActiveDevicesForDisposableGate() {
+        XCTAssertTrue(XMPPLiveSmokeRunner.canTrustAllActiveDevicesForTesting("group-timeline-restart"))
+    }
+
+    func testMemoryOMEMOStoresCreateDistinctLocalRegistrationIDs() throws {
+        let account = "same-account-memory@trix.selfhost.ru"
+        let first = try TrixOMEMOStore.makeStack(
+            account: account,
+            service: "com.softgrid.trix.xmpp.omemo.test.memory.first",
+            persistence: .memory
+        )
+        let second = try TrixOMEMOStore.makeStack(
+            account: account,
+            service: "com.softgrid.trix.xmpp.omemo.test.memory.second",
+            persistence: .memory
+        )
+
+        XCTAssertNotEqual(first.store.localRegistrationId(), 0)
+        XCTAssertNotEqual(second.store.localRegistrationId(), 0)
+        XCTAssertNotEqual(first.store.localRegistrationId(), second.store.localRegistrationId())
+    }
 }

@@ -334,13 +334,31 @@ copying old implementation details.
 - [x] Keep newly decrypted or locally sent DM timeline items visible after app
       restart through the local encrypted timeline cache. The cache file lives
       outside Keychain and is encrypted with a small Keychain-held cache key.
-- [x] Include the sender's current OMEMO device in new DM and group sends through
-      the existing MartinOMEMO recipient-set API, so future MAM archives include
-      a local recipient key for sender-side restart/self-history replay.
-- [ ] Backfill older sender-side OMEMO self-history from MAM after restart.
-      Encrypted server archives are ciphertext-only, and old messages that were
-      not encrypted for the sender's current device cannot be reconstructed
-      without a reviewed recovery/key-backup path.
+- [x] DM MAM reload scans past OMEMO transport-only/session-healing stanzas and
+      read-marker noise until it reaches useful OMEMO payload events or the
+      configured archive scan limit, so multi-device timelines do not depend on
+      whichever device still has local cache.
+- [x] Include the current account bare JID alongside peer/group recipients for
+      new DM and group sends, so MartinOMEMO fanout covers the sender's own
+      published devices as well as addressed recipients. Plaintext fallback
+      remains blocked.
+- [x] Backfill older DM and group self-history on demand when MAM returns
+      ciphertext that lacks a local recipient key: the new client sends an
+      OMEMO-encrypted timeline-backfill request for candidate stanza/message ids,
+      and an updated client that can decrypt the original item replies with an
+      OMEMO-encrypted timeline-backfill response descriptor. Response payloads
+      reconstruct the original timeline item instead of displaying service JSON
+      in chat.
+- [x] Send group backfill request/response descriptors only after the joined MUC
+      path can derive a validated member recipient set with trusted active OMEMO
+      devices; plaintext group repair remains blocked.
+- [ ] Run `apple/scripts/run-persistent-sync-gate.sh` with disposable live
+      credentials after updating clients; the wrapper now includes the
+      credentialed `dm-backfill-repair` smoke. That mode must create a fresh
+      same-account OMEMO device after an older encrypted DM exists, observe a
+      MAM sender stanza missing the fresh local recipient key, and then receive
+      the same item through encrypted timeline-backfill repair without printing
+      message bodies.
 
 ## E2EE
 

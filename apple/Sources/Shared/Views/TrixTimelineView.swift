@@ -3330,6 +3330,10 @@ private struct TrixTimelineRow: View {
     let openThread: () -> Void
     let openMention: (String) -> Void
     let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
+    #if DEBUG
+    @AppStorage(TrixDebugSettings.showOMEMORecipientKeyCountsKey)
+    private var showOMEMORecipientKeyCounts = false
+    #endif
 
     private var item: TrixTimelineItem {
         presentation.item
@@ -3447,6 +3451,16 @@ private struct TrixTimelineRow: View {
                                         .help(deliveryState.label)
                                 }
 
+                                #if DEBUG
+                                if showOMEMORecipientKeyCounts,
+                                   let keyCount = item.omemoRecipientKeyCount {
+                                    TrixOMEMOKeyCountBadge(
+                                        keyCount: keyCount,
+                                        isOutgoing: item.isLocalEcho
+                                    )
+                                }
+                                #endif
+
                                 Text(item.timestamp, style: .time)
                                     .font(.caption2.weight(.medium))
                                     .monospacedDigit()
@@ -3535,6 +3549,23 @@ private struct TrixTimelineRow: View {
         #endif
     }
 }
+
+#if DEBUG
+private struct TrixOMEMOKeyCountBadge: View {
+    let keyCount: Int
+    let isOutgoing: Bool
+
+    var body: some View {
+        Label("\(keyCount)", systemImage: "key.horizontal")
+            .font(.caption2.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .monospacedDigit()
+            .foregroundStyle(isOutgoing ? .white.opacity(0.88) : .secondary)
+            .accessibilityLabel("OMEMO recipient key count \(keyCount)")
+            .help("OMEMO recipient keys: \(keyCount)")
+    }
+}
+#endif
 
 private struct TrixQuotePreviewView: View {
     let reply: TrixReplyReference

@@ -19,6 +19,7 @@ Usage:
 Runs one repeatable encrypted sync gate without Keychain-backed smoke storage by default:
 1) DM timeline persistence (`timeline-restart`)
 2) Group timeline persistence (`group-timeline-restart`)
+3) Same-account new-device DM backfill repair (`dm-backfill-repair`)
 
 Options:
   --app-executable <path>  Override app executable path.
@@ -186,10 +187,12 @@ seed_output="$(mktemp "${TMPDIR:-/tmp}/trix-persistent-seed.XXXXXX.log")"
 verify_output="$(mktemp "${TMPDIR:-/tmp}/trix-persistent-verify.XXXXXX.log")"
 dm_output="$(mktemp "${TMPDIR:-/tmp}/trix-persistent-dm.XXXXXX.log")"
 group_output="$(mktemp "${TMPDIR:-/tmp}/trix-persistent-group.XXXXXX.log")"
-trap 'rm -f "$seed_output" "$verify_output" "$dm_output" "$group_output"' EXIT
+backfill_output="$(mktemp "${TMPDIR:-/tmp}/trix-persistent-backfill.XXXXXX.log")"
+trap 'rm -f "$seed_output" "$verify_output" "$dm_output" "$group_output" "$backfill_output"' EXIT
 
 run_smoke_mode timeline-restart "$dm_output"
 run_smoke_mode group-timeline-restart "$group_output"
+run_smoke_mode dm-backfill-repair "$backfill_output"
 
 if [[ $INCLUDE_KEYCHAIN_RELAUNCH -eq 0 ]]; then
   status "skip keychain_relaunch=default_disabled"
@@ -210,4 +213,4 @@ if [[ "$seed_pid" == "$verify_pid" ]]; then
   die "pid_not_relaunched pid=$seed_pid"
 fi
 
-status "ok dm_persistence=true group_persistence=true process_relaunch=true seed_pid=$seed_pid verify_pid=$verify_pid"
+status "ok dm_persistence=true group_persistence=true dm_backfill_repair=true process_relaunch=true seed_pid=$seed_pid verify_pid=$verify_pid"

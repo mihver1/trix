@@ -151,11 +151,14 @@ this slice. The current decision record
 and libsignal `1.0.0` expose no reviewed backup/export/import recovery API for
 restoring OMEMO private state to a fresh device. If the app is deleted, the
 Keychain state is reset, or the account is restored onto a fresh device, the
-client creates a new OMEMO device. Old ciphertext archived in MAM or stored in
-local caches can remain unavailable when it was not encrypted for the
-replacement device. Trix must not add custom key recovery or manually move OMEMO
-private key material to work around this; the limitation must remain visible
-until a reviewed MartinOMEMO recovery path is selected.
+client creates a new OMEMO device. Old DM or group ciphertext archived in MAM
+that was not encrypted for the replacement device can be repaired only by an
+updated client that already decrypted the original item and answers an
+OMEMO-encrypted timeline-backfill request. This is message resynchronization,
+not key recovery: the response body remains inside MartinOMEMO encryption, group
+repair descriptors require a validated joined-MUC recipient set with trusted
+active devices, and Trix must not add custom key recovery or manually move OMEMO
+private key material to work around unavailable history.
 
 ## Group E2EE Risk
 

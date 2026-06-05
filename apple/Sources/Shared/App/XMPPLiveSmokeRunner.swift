@@ -51,6 +51,7 @@ enum XMPPLiveSmokeRunner {
         case sendTimeline = "send-timeline"
         case timelineRestart = "timeline-restart"
         case groupTimelineRestart = "group-timeline-restart"
+        case dmBackfillRepair = "dm-backfill-repair"
         case timelineRelaunchSeed = "timeline-relaunch-seed"
         case timelineRelaunchVerify = "timeline-relaunch-verify"
         case dmE2EE = "dm-e2ee"
@@ -76,7 +77,7 @@ enum XMPPLiveSmokeRunner {
             case .login, .roster, .roomList, .search, .peerDevices,
                  .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
-                 .groupTimelineRestart, .dmE2EE, .dmReaction, .dmReply, .dmEditRetract,
+                 .groupTimelineRestart, .dmBackfillRepair, .dmE2EE, .dmReaction, .dmReply, .dmEditRetract,
                  .dmAttachment, .deliveryReceipt, .typing, .groupE2EE, .groupAttachment,
                  .groupMention, .groupThread, .groupLeave, .groupCallLabMedia,
                  .callEchoAssistant, .readMarkers:
@@ -91,11 +92,43 @@ enum XMPPLiveSmokeRunner {
             case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
                  .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
-                 .groupTimelineRestart, .timelineRelaunchSeed, .dmE2EE, .dmReaction, .dmReply,
+                 .groupTimelineRestart, .dmBackfillRepair, .timelineRelaunchSeed, .dmE2EE, .dmReaction, .dmReply,
                  .dmEditRetract, .dmAttachment, .deliveryReceipt, .typing, .groupE2EE,
                  .groupAttachment, .groupMention, .groupThread, .groupLeave,
                  .groupCallLabMedia, .callEchoAssistant, .readMarkers:
                 return true
+            }
+        }
+
+        var canWarmPeerDevice: Bool {
+            switch self {
+            case .timelineRestart:
+                return true
+            case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .profileUpdate, .blockedSend, .timeline, .sendTimeline,
+                 .groupTimelineRestart, .dmBackfillRepair, .timelineRelaunchSeed,
+                 .timelineRelaunchVerify, .dmE2EE, .dmReaction, .dmReply,
+                 .dmEditRetract, .dmAttachment, .deliveryReceipt, .typing,
+                 .groupE2EE, .groupAttachment, .groupMention, .groupThread,
+                 .groupLeave, .groupCallLabMedia, .callEchoAssistant, .readMarkers:
+                return false
+            }
+        }
+
+        var canTrustAllActiveDevices: Bool {
+            switch self {
+            case .timelineRestart, .groupTimelineRestart, .dmBackfillRepair:
+                return true
+            case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .profileUpdate, .blockedSend, .timeline, .sendTimeline,
+                 .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE,
+                 .dmReaction, .dmReply, .dmEditRetract, .dmAttachment,
+                 .deliveryReceipt, .typing, .groupE2EE, .groupAttachment,
+                 .groupMention, .groupThread, .groupLeave, .groupCallLabMedia,
+                 .callEchoAssistant, .readMarkers:
+                return false
             }
         }
     }
@@ -109,6 +142,20 @@ enum XMPPLiveSmokeRunner {
         let seededAt: Date
         let seedPID: Int32
     }
+
+    #if DEBUG
+    static func supportsModeForTesting(_ rawValue: String) -> Bool {
+        Mode(rawValue: rawValue) != nil
+    }
+
+    static func canWarmPeerDeviceForTesting(_ rawValue: String) -> Bool {
+        Mode(rawValue: rawValue)?.canWarmPeerDevice ?? false
+    }
+
+    static func canTrustAllActiveDevicesForTesting(_ rawValue: String) -> Bool {
+        Mode(rawValue: rawValue)?.canTrustAllActiveDevices ?? false
+    }
+    #endif
 
     private struct Configuration {
         let mode: Mode
@@ -151,6 +198,7 @@ enum XMPPLiveSmokeRunner {
             case .roster, .roomList, .search, .peerDevices, .secondDeviceFingerprint,
                  .ownDeviceRevocation, .trustPeer, .profile, .profileUpdate, .blockedSend,
                  .timeline, .sendTimeline, .timelineRestart, .groupTimelineRestart,
+                 .dmBackfillRepair,
                  .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE, .dmAttachment,
                  .dmReaction, .dmReply, .dmEditRetract, .deliveryReceipt, .groupE2EE,
                  .groupAttachment, .groupMention, .groupThread, .groupLeave,
@@ -430,6 +478,13 @@ enum XMPPLiveSmokeRunner {
                     session: session
                 )
 
+            case .dmBackfillRepair:
+                try await runDMBackfillRepairSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
             case .timelineRelaunchSeed:
                 try await runTimelineRelaunchSeedSmoke(
                     configuration: configuration,
@@ -582,59 +637,259 @@ enum XMPPLiveSmokeRunner {
         session: TrixSession
     ) async throws {
         let peerID = try requiredPeerID(configuration.peerID)
-        if configuration.allowSend {
+        var peerService: XMPPMartinService?
+        var peerSession: TrixSession?
+        var restoredService: XMPPMartinService?
+
+        do {
+            if configuration.allowSend {
+                if Mode.timelineRestart.canWarmPeerDevice,
+                   let peerPassword = configuration.peerPassword,
+                   !peerPassword.isEmpty {
+                    let loggedInPeerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+                    let loggedInPeerSession = try await loggedInPeerService.login(
+                        userID: peerID,
+                        password: peerPassword,
+                        serverURL: configuration.serverURL
+                    )
+                    peerService = loggedInPeerService
+                    peerSession = loggedInPeerSession
+                    status("timeline-restart peer-login ok resource=\(loggedInPeerSession.deviceID)")
+                }
+
+                try await ensureTrustedOwnActiveDevices(
+                    configuration: configuration,
+                    service: service,
+                    session: session,
+                    statusPrefix: "timeline-restart trust owner-own"
+                )
+                try await ensureTrustedPeer(
+                    peerID: peerID,
+                    service: service,
+                    session: session,
+                    allowTrust: configuration.allowTrust,
+                    statusPrefix: "timeline-restart"
+                )
+                let room = try await service.createEncryptedDirectRoom(
+                    inviteeUserID: peerID,
+                    name: "",
+                    session: session
+                )
+                let sentItem = try await service.sendText("smoke-restart-\(UUID().uuidString)", roomID: room.id, session: session)
+                status("timeline-restart send ok id=\(sentItem.id)")
+            }
+
+            let beforeItems = try await service.timeline(roomID: peerID, session: session)
+            guard !beforeItems.isEmpty else {
+                status("timeline-restart failed empty_before")
+                throw TrixClientError.roomUnavailable
+            }
+
+            if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
+                status("timeline-restart before diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+            }
+
+            try? await service.logout(session: session)
+            let loggedInRestoredService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+            restoredService = loggedInRestoredService
+            let restoredAccount = try await loggedInRestoredService.restore(session: session)
+            status("timeline-restart restore ok user=\(restoredAccount.userID) resource=\(restoredAccount.deviceID)")
+
+            let afterItems = try await loggedInRestoredService.timeline(roomID: peerID, session: session)
+            let beforeIDs = Set(beforeItems.map(\.id))
+            let afterIDs = Set(afterItems.map(\.id))
+            let overlapCount = beforeIDs.intersection(afterIDs).count
+            guard overlapCount > 0 else {
+                status("timeline-restart failed overlap=0 after=\(afterItems.count)")
+                try? await loggedInRestoredService.logout(session: session)
+                restoredService = nil
+                throw TrixClientError.roomUnavailable
+            }
+
+            let localEchoCount = afterItems.filter(\.isLocalEcho).count
+            let sentCount = afterItems.filter { $0.deliveryState == .sent }.count
+            let deliveredCount = afterItems.filter { $0.deliveryState == .delivered }.count
+            status(
+                "timeline-restart ok before=\(beforeItems.count) after=\(afterItems.count) overlap=\(overlapCount) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)"
+            )
+            if let diagnostics = try await loggedInRestoredService.timelineDiagnostics(roomID: peerID, session: session) {
+                status("timeline-restart after diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+            }
+
+            try? await loggedInRestoredService.logout(session: session)
+            restoredService = nil
+            if let peerService, let peerSession {
+                try? await peerService.logout(session: peerSession)
+            }
+        } catch {
+            if let restoredService {
+                try? await restoredService.logout(session: session)
+            }
+            if let peerService, let peerSession {
+                try? await peerService.logout(session: peerSession)
+            }
+            throw error
+        }
+    }
+
+    private static func runDMBackfillRepairSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-backfill-repair peer-login ok resource=\(peerSession.deviceID)")
+
+        var freshService: XMPPMartinService?
+        var freshSession: TrixSession?
+        do {
             try await ensureTrustedPeer(
                 peerID: peerID,
                 service: service,
                 session: session,
                 allowTrust: configuration.allowTrust,
-                statusPrefix: "timeline-restart"
+                statusPrefix: "dm-backfill-repair seed"
             )
+            try await ensureTrustedOwnActiveDevices(
+                configuration: configuration,
+                service: service,
+                session: session,
+                statusPrefix: "dm-backfill-repair trust primary-own"
+            )
+
             let room = try await service.createEncryptedDirectRoom(
                 inviteeUserID: peerID,
                 name: "",
                 session: session
             )
-            let sentItem = try await service.sendText("smoke-restart-\(UUID().uuidString)", roomID: room.id, session: session)
-            status("timeline-restart send ok id=\(sentItem.id)")
+            let messageBody = "smoke-backfill-\(UUID().uuidString)"
+            let sentItem = try await service.sendText(messageBody, roomID: room.id, session: session)
+            status("dm-backfill-repair seed-send ok id=\(sentItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-backfill-repair",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-backfill-repair failed seed_receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let primaryStatus = try await service.deviceVerificationStatus(session: session)
+            let freshProfileName = smokeSecondDeviceProfileName(configuration.secondDeviceProfile)
+            let loggedInFreshService = smokeService(configuration: configuration, profileName: freshProfileName)
+            freshService = loggedInFreshService
+            let loggedInFreshSession = try await loggedInFreshService.login(
+                userID: configuration.userID,
+                password: configuration.password,
+                serverURL: configuration.serverURL
+            )
+            freshSession = loggedInFreshSession
+            status("dm-backfill-repair fresh-login ok profile=\(freshProfileName) resource=\(loggedInFreshSession.deviceID)")
+
+            let freshStatus = try await loggedInFreshService.deviceVerificationStatus(session: loggedInFreshSession)
+            status(
+                "dm-backfill-repair device-check primary=\(primaryStatus.deviceID) fresh=\(freshStatus.deviceID) profile=\(freshProfileName)"
+            )
+            guard primaryStatus.deviceID != freshStatus.deviceID else {
+                status("dm-backfill-repair failed distinct_local_devices=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            try await ensureTrustedDevice(
+                userID: session.userID,
+                deviceID: freshStatus.deviceID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-backfill-repair trust primary-fresh"
+            )
+            try await ensureTrustedDevice(
+                userID: session.userID,
+                deviceID: primaryStatus.deviceID,
+                service: loggedInFreshService,
+                session: loggedInFreshSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-backfill-repair trust fresh-primary"
+            )
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: loggedInFreshService,
+                session: loggedInFreshSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-backfill-repair trust fresh-peer"
+            )
+            try await ensureTrustedOwnActiveDevices(
+                configuration: configuration,
+                service: loggedInFreshService,
+                session: loggedInFreshSession,
+                statusPrefix: "dm-backfill-repair trust fresh-own"
+            )
+
+            let initialItems = try await loggedInFreshService.timeline(roomID: peerID, session: loggedInFreshSession)
+            let initialContainsSeed = initialItems.contains { $0.id == sentItem.id }
+            let diagnostics = try await loggedInFreshService.timelineDiagnostics(roomID: peerID, session: loggedInFreshSession)
+            let missingLocalKeyCount = diagnostics?.mamAccountSenderMissingLocalKeyCount ?? 0
+            guard missingLocalKeyCount > 0 else {
+                status("dm-backfill-repair failed missing_local_key=0 initial_contains=\(initialContainsSeed)")
+                throw TrixClientError.roomUnavailable
+            }
+            status(
+                "dm-backfill-repair request ok missing_local_key=\(missingLocalKeyCount) initial_contains=\(initialContainsSeed)"
+            )
+
+            guard try await waitForDirectBackfilledMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: peerID,
+                role: "fresh",
+                statusPrefix: "dm-backfill-repair",
+                service: loggedInFreshService,
+                session: loggedInFreshSession
+            ) else {
+                status("dm-backfill-repair failed repaired=false")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let repairedItems = try await loggedInFreshService.timeline(roomID: peerID, session: loggedInFreshSession)
+            let repairedCount = repairedItems.filter { $0.id == sentItem.id }.count
+            guard repairedCount > 0 else {
+                status("dm-backfill-repair failed repaired_missing_after_wait=true")
+                throw TrixClientError.roomUnavailable
+            }
+
+            status(
+                "dm-backfill-repair ok repaired=true missing_local_key=\(missingLocalKeyCount) primary_device=\(primaryStatus.deviceID) fresh_device=\(freshStatus.deviceID)"
+            )
+            try? await loggedInFreshService.logout(session: loggedInFreshSession)
+            try? await peerService.logout(session: peerSession)
+        } catch {
+            if let freshService, let freshSession {
+                try? await freshService.logout(session: freshSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
         }
-
-        let beforeItems = try await service.timeline(roomID: peerID, session: session)
-        guard !beforeItems.isEmpty else {
-            status("timeline-restart failed empty_before")
-            throw TrixClientError.roomUnavailable
-        }
-
-        if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
-            status("timeline-restart before diagnostics \(timelineDiagnosticsSummary(diagnostics))")
-        }
-
-        try? await service.logout(session: session)
-        let restoredService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
-        let restoredAccount = try await restoredService.restore(session: session)
-        status("timeline-restart restore ok user=\(restoredAccount.userID) resource=\(restoredAccount.deviceID)")
-
-        let afterItems = try await restoredService.timeline(roomID: peerID, session: session)
-        let beforeIDs = Set(beforeItems.map(\.id))
-        let afterIDs = Set(afterItems.map(\.id))
-        let overlapCount = beforeIDs.intersection(afterIDs).count
-        guard overlapCount > 0 else {
-            status("timeline-restart failed overlap=0 after=\(afterItems.count)")
-            try? await restoredService.logout(session: session)
-            throw TrixClientError.roomUnavailable
-        }
-
-        let localEchoCount = afterItems.filter(\.isLocalEcho).count
-        let sentCount = afterItems.filter { $0.deliveryState == .sent }.count
-        let deliveredCount = afterItems.filter { $0.deliveryState == .delivered }.count
-        status(
-            "timeline-restart ok before=\(beforeItems.count) after=\(afterItems.count) overlap=\(overlapCount) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)"
-        )
-        if let diagnostics = try await restoredService.timelineDiagnostics(roomID: peerID, session: session) {
-            status("timeline-restart after diagnostics \(timelineDiagnosticsSummary(diagnostics))")
-        }
-
-        try? await restoredService.logout(session: session)
     }
 
     private static func runSecondDeviceFingerprintSmoke(
@@ -860,6 +1115,12 @@ enum XMPPLiveSmokeRunner {
                 thirdSession: loggedInThirdSession,
                 allowTrust: configuration.allowTrust,
                 statusPrefix: "group-timeline-restart"
+            )
+            try await ensureTrustedOwnActiveDevices(
+                configuration: configuration,
+                service: service,
+                session: session,
+                statusPrefix: "group-timeline-restart trust owner-own"
             )
 
             let messageBody = "smoke-group-restart-\(UUID().uuidString)"
@@ -2887,12 +3148,70 @@ enum XMPPLiveSmokeRunner {
         allowTrust: Bool,
         statusPrefix: String
     ) async throws {
+        try await ensureTrustedActiveDevices(
+            userID: peerID,
+            service: service,
+            session: session,
+            allowTrust: allowTrust,
+            statusPrefix: "\(statusPrefix) peer-trust"
+        )
+    }
+
+    private static func ensureTrustedOwnActiveDevices(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession,
+        statusPrefix: String
+    ) async throws {
+        guard configuration.mode.canTrustAllActiveDevices else {
+            return
+        }
+
+        let localStatus = try await service.deviceVerificationStatus(session: session)
+        try await ensureTrustedActiveDevices(
+            userID: session.userID,
+            service: service,
+            session: session,
+            allowTrust: configuration.allowTrust,
+            statusPrefix: statusPrefix,
+            excludedDeviceID: localStatus.deviceID,
+            requireActiveDevice: false
+        )
+    }
+
+    private static func ensureTrustedActiveDevices(
+        userID: String,
+        service: XMPPMartinService,
+        session: TrixSession,
+        allowTrust: Bool,
+        statusPrefix: String,
+        excludedDeviceID: String? = nil,
+        requireActiveDevice: Bool = true
+    ) async throws {
+        let excluded = excludedDeviceID?.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastDevices: [TrixPeerDeviceIdentity] = []
         for attempt in 0..<20 {
-            let devices = try await service.refreshPeerDeviceIdentities(userID: peerID, session: session)
+            let devices = try await service.refreshPeerDeviceIdentities(userID: userID, session: session)
             lastDevices = devices
-            if devices.contains(where: \.canSendEncrypted) {
-                status("\(statusPrefix) peer-trust ok active=\(devices.filter(\.isActive).count) trusted=\(devices.filter(\.canSendEncrypted).count)")
+            let activeDevices = devices.filter { device in
+                guard device.isActive else {
+                    return false
+                }
+                return excluded == nil || device.deviceID != excluded
+            }
+            if activeDevices.isEmpty {
+                if requireActiveDevice {
+                    if attempt < 19 {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        continue
+                    }
+                    throw TrixClientError.noEligibleDeviceForVerification
+                }
+                status("\(statusPrefix) ok active=0 trusted=0")
+                return
+            }
+            if activeDevices.allSatisfy(\.canSendEncrypted) {
+                status("\(statusPrefix) ok active=\(activeDevices.count) trusted=\(activeDevices.filter(\.canSendEncrypted).count)")
                 return
             }
 
@@ -2900,15 +3219,78 @@ enum XMPPLiveSmokeRunner {
                 throw TrixClientError.omemoDeviceTrustRequired
             }
 
-            if let device = devices.first(where: \.isActive) {
-                let updatedDevices = try await service.trustPeerDevice(
-                    userID: peerID,
+            for device in activeDevices where !device.canSendEncrypted {
+                lastDevices = try await service.trustPeerDevice(
+                    userID: userID,
                     deviceID: device.deviceID,
                     session: session
                 )
+            }
+
+            let trustedActiveDevices = lastDevices.filter { device in
+                guard device.isActive else {
+                    return false
+                }
+                return excluded == nil || device.deviceID != excluded
+            }
+            if !trustedActiveDevices.isEmpty,
+               trustedActiveDevices.allSatisfy(\.canSendEncrypted) {
+                status("\(statusPrefix) ok active=\(trustedActiveDevices.count) trusted=\(trustedActiveDevices.filter(\.canSendEncrypted).count)")
+                return
+            }
+
+            if attempt < 19 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        let activeDevices = lastDevices.filter { device in
+            guard device.isActive else {
+                return false
+            }
+            return excluded == nil || device.deviceID != excluded
+        }
+        if activeDevices.contains(where: { !$0.canSendEncrypted }) {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+        throw TrixClientError.noEligibleDeviceForVerification
+    }
+
+    private static func ensureTrustedDevice(
+        userID: String,
+        deviceID: String,
+        service: XMPPMartinService,
+        session: TrixSession,
+        allowTrust: Bool,
+        statusPrefix: String
+    ) async throws {
+        let targetDeviceID = deviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !targetDeviceID.isEmpty else {
+            throw TrixClientError.ownDeviceUnavailable
+        }
+
+        var lastDevices: [TrixPeerDeviceIdentity] = []
+        for attempt in 0..<20 {
+            let devices = try await service.refreshPeerDeviceIdentities(userID: userID, session: session)
+            lastDevices = devices
+            if devices.contains(where: { $0.deviceID == targetDeviceID && $0.canSendEncrypted }) {
+                status("\(statusPrefix) ok device=\(targetDeviceID) active=\(devices.filter(\.isActive).count) trusted=\(devices.filter(\.canSendEncrypted).count)")
+                return
+            }
+
+            guard allowTrust else {
+                throw TrixClientError.omemoDeviceTrustRequired
+            }
+
+            if devices.contains(where: { $0.deviceID == targetDeviceID && $0.isActive }) {
+                let updatedDevices = try await service.trustPeerDevice(
+                    userID: userID,
+                    deviceID: targetDeviceID,
+                    session: session
+                )
                 lastDevices = updatedDevices
-                if updatedDevices.contains(where: \.canSendEncrypted) {
-                    status("\(statusPrefix) peer-trust ok active=\(updatedDevices.filter(\.isActive).count) trusted=\(updatedDevices.filter(\.canSendEncrypted).count)")
+                if updatedDevices.contains(where: { $0.deviceID == targetDeviceID && $0.canSendEncrypted }) {
+                    status("\(statusPrefix) ok device=\(targetDeviceID) active=\(updatedDevices.filter(\.isActive).count) trusted=\(updatedDevices.filter(\.canSendEncrypted).count)")
                     return
                 }
             }
@@ -2918,10 +3300,12 @@ enum XMPPLiveSmokeRunner {
             }
         }
 
-        if lastDevices.contains(where: \.isActive) {
+        if lastDevices.contains(where: { $0.deviceID == targetDeviceID && $0.isActive }) {
+            status("\(statusPrefix) failed device=\(targetDeviceID) active=\(lastDevices.filter(\.isActive).count) trusted=\(lastDevices.filter(\.canSendEncrypted).count)")
             throw TrixClientError.omemoDeviceTrustRequired
         }
-        throw TrixClientError.noEligibleDeviceForVerification
+        status("\(statusPrefix) failed device=\(targetDeviceID) active=\(lastDevices.filter(\.isActive).count) trusted=\(lastDevices.filter(\.canSendEncrypted).count)")
+        throw TrixClientError.ownDeviceUnavailable
     }
 
     private static func ensureGroupTrustGraph(
@@ -3093,6 +3477,40 @@ enum XMPPLiveSmokeRunner {
 
         if sawID {
             status("\(statusPrefix) failed receive_mismatch role=\(role) id=\(messageID)")
+        }
+        return false
+    }
+
+    private static func waitForDirectBackfilledMessage(
+        messageID: String,
+        expectedBody: String,
+        expectedSender: String,
+        roomID: String,
+        role: String,
+        statusPrefix: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> Bool {
+        let expectedSenderKey = expectedSender.lowercased()
+        var sawID = false
+        for _ in 0..<60 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            if let item = items.first(where: { item in
+                let senderMatches = item.sender.lowercased() == expectedSenderKey
+                let idMatches = item.id == messageID
+                let bodyMatches = item.body == expectedBody
+                sawID = sawID || idMatches
+                return senderMatches && idMatches && bodyMatches
+            }) {
+                status("\(statusPrefix) repair receive ok role=\(role) id=\(messageID) decrypted=true local_echo=\(item.isLocalEcho)")
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("\(statusPrefix) failed repair_receive_mismatch role=\(role) id=\(messageID)")
         }
         return false
     }

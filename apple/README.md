@@ -133,8 +133,9 @@ Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
 `second-device-fingerprint`, `own-device-revocation`, `trust-peer`, `profile`,
 `profile-update`, `timeline`, `send-timeline`, `timeline-restart`,
-`group-timeline-restart`, `timeline-relaunch-seed`, `timeline-relaunch-verify`,
-`dm-e2ee`, `dm-reaction`, `dm-reply`, `dm-edit-retract`, `dm-attachment`,
+`group-timeline-restart`, `dm-backfill-repair`,
+`timeline-relaunch-seed`, `timeline-relaunch-verify`, `dm-e2ee`,
+`dm-reaction`, `dm-reply`, `dm-edit-retract`, `dm-attachment`,
 `delivery-receipt`, `typing`, `blocked-send`, `group-e2ee`,
 `group-attachment`, `group-mention`, `group-thread`, `group-leave`,
 `group-call-lab-media`, `call-echo-assistant`, and `read-markers`.
@@ -168,8 +169,9 @@ TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD='...' \
 ./scripts/run-persistent-sync-gate.sh
 ```
 
-The wrapper runs `timeline-restart` and `group-timeline-restart` without
-Keychain-backed smoke storage by default. The Keychain-specific process
+The wrapper runs `timeline-restart`, `group-timeline-restart`, and
+`dm-backfill-repair` without Keychain-backed smoke storage by default. The
+Keychain-specific process
 quit/relaunch proof (`timeline-relaunch-seed` then `timeline-relaunch-verify`)
 is skipped unless `--include-keychain-relaunch` is provided; that opt-in sets
 `TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN=1` for the relaunch processes only. The
@@ -225,6 +227,13 @@ reached the archive start, and whether archived sender stanzas are missing a
 local recipient key. The `group-timeline-restart` mode uses the same
 three-account variables as `group-e2ee`, sends one OMEMO group message, restores
 through a fresh service instance, and requires timeline overlap after restart.
+The `dm-backfill-repair` mode uses `TRIX_XMPP_LIVE_SMOKE_PEER_ID`,
+`TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD`, `TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND=1`, and
+`TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`: it sends an encrypted DM before logging
+in a fresh same-account local profile, verifies MAM saw a sender stanza missing
+the fresh device's local recipient key, then waits for the item to appear via an
+encrypted timeline-backfill response. It prints only IDs, device ids, counts,
+and booleans.
 `timeline-relaunch-seed` stores a scrubbed overlap marker plus a smoke Keychain
 session, while `timeline-relaunch-verify` runs in a second process, restores from
 that saved session without requiring a password variable, and requires overlap.
@@ -411,9 +420,16 @@ The checked-in Apple code is now the first XMPP client slice:
 - OMEMO encrypted DM text send after at least one active contact device is
   trusted;
 - sender-side restart replay for new outbound messages is supported by including
-  the current account's own OMEMO device in the MartinOMEMO recipient set for
-  DM and group sends; older archived stanzas without that local recipient key
-  remain unrecoverable without a reviewed recovery/key-backup path;
+  the current account bare JID alongside peer/group recipients, so MartinOMEMO
+  fanout covers the sender's own published devices as well as addressed
+  recipients;
+- DM and group timeline sync can repair old MAM ciphertext that lacks a local
+  recipient key by sending an OMEMO-encrypted timeline-backfill request; an
+  updated client that can still decrypt the original item responds with an
+  OMEMO-encrypted timeline-backfill descriptor that reconstructs the timeline
+  item without showing service JSON in chat. Group repair descriptors use the
+  joined MUC member set and remain blocked unless every repair recipient has a
+  trusted active OMEMO device;
 - new encrypted sends refresh the current account's published OMEMO devices and
   are blocked while another active account device is still untrusted, so a
   sender cannot create fresh ciphertext that their other signed-in client cannot
@@ -516,7 +532,10 @@ server room-list refresh starts. The room-list payload is stored in Application
 Support, not Keychain; Keychain stores only the room-summary cache key.
 The `timeline-restart` and `group-timeline-restart` live-smoke modes exercise
 DM and group overlap through fresh service restore and report only scrubbed
-counts/IDs/booleans. `timeline-relaunch-seed` and
+counts/IDs/booleans. The `dm-backfill-repair` live-smoke mode is the specific
+same-account new-device repair gate for old DM archive rows that were not
+encrypted to the new device, and it is part of
+`./scripts/run-persistent-sync-gate.sh` by default. `timeline-relaunch-seed` and
 `timeline-relaunch-verify` provide the process-level quit/relaunch harness by
 persisting a smoke Keychain session and marker in one process and verifying
 overlap in a second process. Keep MVP checklist items open until this wrapper
@@ -526,11 +545,15 @@ The Device Verification And Recovery settings surface is explicit about the
 current recovery limit. This MartinOMEMO slice does not provide a validated
 server-side OMEMO key backup/recovery path, and the app does not implement one
 itself. Reinstalling the app or resetting its Keychain state creates a new OMEMO
-device. Old encrypted history that was not encrypted for that device can remain
-unavailable, and replacement devices must be trusted only after comparing the
-visual fingerprint from an existing trusted session. The current visual flow is
-a deterministic display transform over the MartinOMEMO identity fingerprint; it
-is not an interactive SAS exchange.
+device. DM and group history that was not encrypted for that device can now be
+repaired only when an updated peer, own client, or group member client that
+still has decryptable plaintext comes online and answers the encrypted
+timeline-backfill request. Group repair still requires joined MUC membership
+resolution plus trusted active OMEMO devices for every repair recipient.
+Replacement devices must be trusted only after comparing the visual fingerprint
+from an existing trusted session. The current visual flow is a deterministic
+display transform over the MartinOMEMO identity
+fingerprint; it is not an interactive SAS exchange.
 
 ## Target Service Boundary
 

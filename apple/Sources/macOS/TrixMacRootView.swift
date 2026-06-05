@@ -1492,6 +1492,10 @@ struct TrixMacSettingsView: View {
     @ObservedObject private var roomListViewModel: RoomListViewModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
     @State private var activeTab: TrixMacSettingsTab = .account
+    #if DEBUG
+    @AppStorage(TrixDebugSettings.showOMEMORecipientKeyCountsKey)
+    private var showOMEMORecipientKeyCounts = false
+    #endif
 
     init(model: TrixAppModel) {
         self.model = model
@@ -1752,6 +1756,15 @@ struct TrixMacSettingsView: View {
                 }
                 .padding(.vertical, 4)
             }
+
+            #if DEBUG
+            GroupBox("Debug") {
+                Toggle(isOn: $showOMEMORecipientKeyCounts) {
+                    Label("Show OMEMO Key Counts", systemImage: "key.horizontal")
+                }
+                .padding(.vertical, 4)
+            }
+            #endif
 
             GroupBox("Redacted Diagnostics") {
                 VStack(alignment: .leading, spacing: 10) {

@@ -417,6 +417,10 @@ struct TrixSettingsView: View {
     @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
+    #if DEBUG
+    @AppStorage(TrixDebugSettings.showOMEMORecipientKeyCountsKey)
+    private var showOMEMORecipientKeyCounts = false
+    #endif
 
     init(model: TrixAppModel) {
         self.model = model
@@ -607,6 +611,12 @@ struct TrixSettingsView: View {
             }
 
             Section("Diagnostics") {
+                #if DEBUG
+                Toggle(isOn: $showOMEMORecipientKeyCounts) {
+                    Label("Show OMEMO Key Counts", systemImage: "key.horizontal")
+                }
+                #endif
+
                 ForEach(diagnosticRows, id: \.0) { title, value in
                     LabeledContent(title, value: value)
                 }

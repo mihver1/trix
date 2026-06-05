@@ -192,6 +192,17 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let attachment: TrixTimelineAttachment?
     }
 
+    private struct DecodedOMEMOMessage {
+        let message: Message
+        let senderFingerprint: String?
+    }
+
+    private enum DecodedTimelinePayload {
+        case item(TrixTimelineItem)
+        case backfillRequest(TrixTimelineBackfillRequestDescriptor)
+        case ignored
+    }
+
     private struct KnownGroupRoom: Sendable {
         let roomID: String
         var name: String
@@ -707,6 +718,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private var pendingGroupInvitations: [String: [String: CapturedMUCInvitation]] = [:]
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
+    private var requestedTimelineBackfillIDs: [String: Set<String>] = [:]
+    private var sentTimelineBackfillIDs: [String: Set<String>] = [:]
     private var callDescriptorHistory: [String: [String: [TrixReceivedCallDescriptor]]] = [:]
     private var devicePassportDescriptorHistory: [String: [TrixReceivedDevicePassportDescriptor]] = [:]
     private let timelineCacheStore: TrixTimelineCacheStore
@@ -718,9 +731,9 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private let omemoService: String
     private static let maxCachedTimelineItems = 200
     private static let mamArchivePageSize = 50
-    private static let mamArchiveMaxPages = 6
+    private static let mamArchiveMaxPages = 50
+    private static let mamArchiveTargetPayloadEvents = 50
     private static let mamArchiveUnfilteredFallbackMaxPages = 50
-    private static let mamArchiveUnfilteredFallbackTargetEvents = 50
     private static let maxCachedCallDescriptors = 100
     private static let maxCachedDevicePassportDescriptors = 200
     private static let typingRecordLifetime: TimeInterval = 6
@@ -1288,7 +1301,20 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let accountJID = try Self.normalizedXMPPJID(session.userID)
         let localCacheLoadedCount = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
         if Self.isMUCJID(peerJID) {
-            _ = try? await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            if let room = try? await joinedGroupRoom(roomID: peerJID, session: session, connection: connection) {
+                let knownMemberUserIDs = Self.memberUserIDs(from: room, fallbackAccountJID: accountJID)
+                cacheGroupMembers(knownMemberUserIDs, roomID: peerJID, accountJID: accountJID, name: nil)
+                if let archiveItems = try? await archivedGroupTimelineItems(
+                    roomID: peerJID,
+                    accountJID: accountJID,
+                    room: room,
+                    knownMemberUserIDs: knownMemberUserIDs,
+                    connection: connection
+                ),
+                    !archiveItems.isEmpty {
+                    storeTimelineItems(archiveItems, accountJID: accountJID, roomID: peerJID)
+                }
+            }
         } else {
             do {
                 let archive = try await archivedTimelineResult(peerJID: peerJID, accountJID: accountJID, connection: connection)
@@ -1414,6 +1440,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
               !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
             throw TrixClientError.omemoEncryptionFailed
         }
+        let omemoRecipientKeyCount = Self.messageOMEMORecipientKeyCount(encryptedMessage)
 
         try await connection.omemoStack.module.write(stanza: encryptedMessage)
 
@@ -1428,7 +1455,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             deliveryState: .sent,
             mentions: metadata.mentions,
             replyTo: metadata.replyTo,
-            thread: metadata.thread
+            thread: metadata.thread,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
         storeTimelineItems([item], accountJID: accountJID, roomID: peerJID)
         return item
@@ -1748,6 +1776,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
               !header.filterChildren(name: "key", xmlns: nil as String?).isEmpty else {
             throw TrixClientError.omemoEncryptionFailed
         }
+        let omemoRecipientKeyCount = Self.messageOMEMORecipientKeyCount(encryptedMessage)
 
         try await connection.omemoStack.module.write(stanza: encryptedMessage)
 
@@ -1759,7 +1788,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             body: Self.attachmentTimelineBody(for: attachment),
             isLocalEcho: true,
             attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
-            deliveryState: .sent
+            deliveryState: .sent,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
         storeTimelineItems([item], accountJID: session.userID, roomID: peerJID)
         return item
@@ -2700,6 +2730,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
         var items: [TrixTimelineItem] = []
         var timelineMutations: [CapturedTimelineMutation] = []
+        var backfillRequests: [TrixTimelineBackfillRequestDescriptor] = []
+        var missingLocalKeyMessageIDs: [String] = []
         var encryptedCount = 0
         var localKeyCount = 0
         var accountSenderCount = 0
@@ -2709,12 +2741,21 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let accountKey = accountJID.lowercased()
         let peerKey = peerJID.lowercased()
         for archived in events {
+            let hasOMEMOPayload = Self.messageHasOMEMOPayload(archived.message)
             if archived.message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil {
                 encryptedCount += 1
             }
             let hasLocalKey = Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID)
             if hasLocalKey {
                 localKeyCount += 1
+            } else if hasOMEMOPayload {
+                missingLocalKeyMessageIDs.append(
+                    contentsOf: Self.timelineBackfillCandidateIDs(
+                        from: archived.message,
+                        fallbackID: archived.messageID,
+                        roomID: peerJID
+                    )
+                )
             }
             switch archived.message.from?.bareJid.stringValue.lowercased() {
             case accountKey:
@@ -2777,7 +2818,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 continue
             }
 
-            if let item = timelineItem(
+            switch decodedTimelinePayload(
                 from: archived.message,
                 accountJID: accountJID,
                 roomID: peerJID,
@@ -2785,7 +2826,12 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 fallbackID: archived.messageID,
                 connection: connection
             ) {
+            case .item(let item):
                 items.append(item)
+            case .backfillRequest(let request):
+                backfillRequests.append(request)
+            case .ignored:
+                break
             }
         }
         for mutation in timelineMutations.sorted(by: { $0.timestamp < $1.timestamp }) {
@@ -2800,6 +2846,20 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 items = Self.applyingReadMarkerUpdate(update, to: items)
             }
         }
+        await requestTimelineBackfillIfNeeded(
+            messageIDs: missingLocalKeyMessageIDs,
+            roomID: peerJID,
+            accountJID: accountJID,
+            requestedByDeviceID: connection.client.boundJid?.resource,
+            connection: connection
+        )
+        await sendTimelineBackfillResponses(
+            to: backfillRequests,
+            sourceItems: items,
+            accountJID: accountJID,
+            roomID: peerJID,
+            connection: connection
+        )
 
         return ArchivedTimelineResult(
             items: items,
@@ -2817,20 +2877,178 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         )
     }
 
+    private func archivedGroupTimelineItems(
+        roomID: String,
+        accountJID: String,
+        room: RoomProtocol,
+        knownMemberUserIDs: Set<String>,
+        connection: Connection
+    ) async throws -> [TrixTimelineItem] {
+        let roomBareJID = BareJID(roomID)
+        connection.omemoStack.module.mamSyncStarted(for: roomBareJID)
+        defer {
+            connection.omemoStack.module.mamSyncFinished(for: roomBareJID)
+        }
+
+        let archive = try await archiveEvents(peerJID: roomID, connection: connection)
+        var items: [TrixTimelineItem] = []
+        var timelineMutations: [CapturedTimelineMutation] = []
+        var backfillRequests: [TrixTimelineBackfillRequestDescriptor] = []
+        var missingLocalKeyMessageIDs: [String] = []
+        var knownMembers = knownMemberUserIDs
+        let localDeviceID = String(connection.omemoStack.store.localRegistrationId())
+
+        for archived in archive.events {
+            let senderJID = Self.groupMessageSenderJID(archived.message, room: room, accountJID: accountJID)
+            if let senderJID {
+                knownMembers.insert(senderJID.lowercased())
+            }
+
+            let hasOMEMOPayload = Self.messageHasOMEMOPayload(archived.message)
+            let hasLocalKey = Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID)
+            if !hasLocalKey && hasOMEMOPayload {
+                missingLocalKeyMessageIDs.append(
+                    contentsOf: Self.timelineBackfillCandidateIDs(
+                        from: archived.message,
+                        fallbackID: archived.messageID,
+                        roomID: roomID
+                    )
+                )
+            }
+
+            if let senderJID,
+               let readMarker = Self.capturedReadMarkerUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                timelineMutations.append(.readMarker(readMarker))
+                continue
+            }
+
+            if let senderJID,
+               let reaction = Self.capturedReactionUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                timelineMutations.append(.reaction(reaction))
+                continue
+            }
+
+            if let senderJID,
+               let retraction = Self.capturedMessageRetractionUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                timelineMutations.append(.retraction(retraction))
+                continue
+            }
+
+            if let senderJID,
+               let edit = capturedMessageEditUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: nil,
+                timestamp: archived.timestamp,
+                fallbackID: archived.messageID,
+                connection: connection
+            ) {
+                timelineMutations.append(.edit(edit))
+                continue
+            }
+
+            switch decodedTimelinePayload(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                timestamp: archived.timestamp,
+                fallbackID: archived.messageID,
+                connection: connection,
+                senderJID: senderJID
+            ) {
+            case .item(let item):
+                items.append(item)
+            case .backfillRequest(let request):
+                backfillRequests.append(request)
+            case .ignored:
+                break
+            }
+        }
+
+        for mutation in timelineMutations.sorted(by: { $0.timestamp < $1.timestamp }) {
+            switch mutation {
+            case .reaction(let update):
+                items = Self.applyingReactionUpdate(update, to: items, accountJID: accountJID)
+            case .edit(let update):
+                items = Self.applyingMessageEditUpdate(update, to: items)
+            case .retraction(let update):
+                items = Self.applyingMessageRetractionUpdate(update, to: items)
+            case .readMarker(let update):
+                items = Self.applyingReadMarkerUpdate(update, to: items)
+            }
+        }
+
+        cacheGroupMembers(knownMembers, roomID: roomID, accountJID: accountJID, name: nil)
+        guard let recipients = try? await validatedGroupBackfillRecipients(
+            roomID: roomID,
+            accountJID: accountJID,
+            knownMemberUserIDs: knownMembers,
+            connection: connection
+        ) else {
+            return items
+        }
+
+        await requestTimelineBackfillIfNeeded(
+            messageIDs: missingLocalKeyMessageIDs,
+            roomID: roomID,
+            accountJID: accountJID,
+            requestedByDeviceID: connection.client.boundJid?.resource,
+            recipientJIDs: recipients,
+            isGroup: true,
+            connection: connection
+        )
+        await sendTimelineBackfillResponses(
+            to: backfillRequests,
+            sourceItems: items,
+            accountJID: accountJID,
+            roomID: roomID,
+            recipientJIDs: recipients,
+            isGroup: true,
+            connection: connection
+        )
+
+        return items
+    }
+
     private func archiveEvents(peerJID: String?, connection: Connection) async throws -> MAMArchiveResult {
         do {
             return try await archiveEvents(
                 version: .MAM2,
                 peerJID: peerJID,
                 connection: connection,
-                maxPages: Self.mamArchiveMaxPages
+                maxPages: Self.mamArchiveMaxPages,
+                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
             )
         } catch {
             return try await archiveEvents(
                 version: .MAM1,
                 peerJID: peerJID,
                 connection: connection,
-                maxPages: Self.mamArchiveMaxPages
+                maxPages: Self.mamArchiveMaxPages,
+                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
             )
         }
     }
@@ -2848,7 +3066,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
                 matchingPeerJID: matchingPeerJID,
                 matchingAccountJID: accountJID,
-                targetMatchedEvents: Self.mamArchiveUnfilteredFallbackTargetEvents
+                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
             )
         } catch {
             return try await archiveEvents(
@@ -2858,7 +3076,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
                 matchingPeerJID: matchingPeerJID,
                 matchingAccountJID: accountJID,
-                targetMatchedEvents: Self.mamArchiveUnfilteredFallbackTargetEvents
+                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
             )
         }
     }
@@ -2870,7 +3088,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         maxPages: Int,
         matchingPeerJID: String? = nil,
         matchingAccountJID: String? = nil,
-        targetMatchedEvents: Int? = nil
+        targetPayloadEvents: Int? = nil
     ) async throws -> MAMArchiveResult {
         var events: [ArchivedMessageSnapshot] = []
         var rawCount = 0
@@ -2900,8 +3118,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 break
             }
 
-            if let targetMatchedEvents,
-               events.count >= targetMatchedEvents {
+            if let targetPayloadEvents,
+               events.filter({ Self.messageHasOMEMOPayload($0.message) }).count >= targetPayloadEvents {
                 break
             }
 
@@ -3055,18 +3273,27 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             return
         }
 
-        guard let item = timelineItem(
-                from: message,
+        switch decodedTimelinePayload(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            timestamp: Self.messageTimestamp(message, fallback: Date()),
+            fallbackID: nil,
+            connection: connection
+        ) {
+        case .item(let item):
+            storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        case .backfillRequest(let request):
+            await sendTimelineBackfillResponses(
+                to: [request],
+                sourceItems: nil,
                 accountJID: accountJID,
                 roomID: roomID,
-                timestamp: Self.messageTimestamp(message, fallback: Date()),
-                fallbackID: nil,
                 connection: connection
-        ) else {
+            )
+        case .ignored:
             return
         }
-
-        storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
     }
 
     private func recordGroupInvitation(
@@ -3274,7 +3501,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             return
         }
 
-        guard let item = timelineItem(
+        let item: TrixTimelineItem
+        switch decodedTimelinePayload(
             from: message,
             accountJID: accountJID,
             roomID: roomID,
@@ -3282,7 +3510,34 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             fallbackID: nil,
             connection: connection,
             senderJID: senderJID
-        ) else {
+        ) {
+        case .item(let decodedItem):
+            item = decodedItem
+        case .backfillRequest(let request):
+            var knownMembers = capturedMessage.knownMemberUserIDs
+            if let senderJID {
+                knownMembers.insert(senderJID.lowercased())
+            }
+            cacheGroupMembers(knownMembers, roomID: roomID, accountJID: accountJID, name: nil)
+            guard let recipients = try? await validatedGroupBackfillRecipients(
+                roomID: roomID,
+                accountJID: accountJID,
+                knownMemberUserIDs: knownMembers,
+                connection: connection
+            ) else {
+                return
+            }
+            await sendTimelineBackfillResponses(
+                to: [request],
+                sourceItems: nil,
+                accountJID: accountJID,
+                roomID: roomID,
+                recipientJIDs: recipients,
+                isGroup: true,
+                connection: connection
+            )
+            return
+        case .ignored:
             return
         }
 
@@ -3362,16 +3617,15 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             return nil
         }
 
-        let decoded: Message
-        let decodeResult = senderJID
-            .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
-            ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
-        switch decodeResult {
-        case .successMessage(let decryptedMessage, _):
-            decoded = decryptedMessage
-        case .successTransportKey, .failure:
+        guard let decodedResult = decodedOMEMOMessage(
+            from: message,
+            senderJID: senderJID,
+            fallbackID: fallbackID,
+            connection: connection
+        ) else {
             return nil
         }
+        let decoded = decodedResult.message
 
         guard let body = decoded.body?.trimmingCharacters(in: .whitespacesAndNewlines),
               !body.isEmpty,
@@ -3404,7 +3658,24 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         )
     }
 
-    private func timelineItem(
+    private func decodedOMEMOMessage(
+        from message: Message,
+        senderJID: String?,
+        fallbackID: String?,
+        connection: Connection
+    ) -> DecodedOMEMOMessage? {
+        let decodeResult = senderJID
+            .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
+            ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
+        switch decodeResult {
+        case .successMessage(let decryptedMessage, let fingerprint):
+            return DecodedOMEMOMessage(message: decryptedMessage, senderFingerprint: fingerprint)
+        case .successTransportKey, .failure:
+            return nil
+        }
+    }
+
+    private func decodedTimelinePayload(
         from message: Message,
         accountJID: String,
         roomID: String,
@@ -3412,27 +3683,32 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         fallbackID: String?,
         connection: Connection,
         senderJID: String? = nil
-    ) -> TrixTimelineItem? {
+    ) -> DecodedTimelinePayload {
         guard message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil else {
-            return nil
+            return .ignored
         }
 
-        let decoded: Message
-        let senderFingerprint: String?
-        let decodeResult = senderJID
-            .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
-            ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
-        switch decodeResult {
-        case .successMessage(let decryptedMessage, let fingerprint):
-            decoded = decryptedMessage
-            senderFingerprint = fingerprint
-        case .successTransportKey, .failure:
-            return nil
+        guard let decodedResult = decodedOMEMOMessage(
+            from: message,
+            senderJID: senderJID,
+            fallbackID: fallbackID,
+            connection: connection
+        ) else {
+            return .ignored
         }
+        let decoded = decodedResult.message
+        let senderFingerprint = decodedResult.senderFingerprint
 
         guard let body = decoded.body?.trimmingCharacters(in: .whitespacesAndNewlines),
               !body.isEmpty else {
-            return nil
+            return .ignored
+        }
+
+        if let request = TrixTimelineBackfillRequestDescriptor.decoded(from: body) {
+            return .backfillRequest(request)
+        }
+        if let response = TrixTimelineBackfillResponseDescriptor.decoded(from: body) {
+            return .item(response.timelineItem(accountJID: accountJID, roomID: roomID))
         }
 
         let resolvedSenderJID = senderJID ?? decoded.from?.bareJid.stringValue ?? roomID
@@ -3448,7 +3724,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 isLocalEcho: isLocalEcho
             )
             storeCallDescriptors([item], accountJID: accountJID, roomID: roomID)
-            return nil
+            return .ignored
         }
         if let descriptor = Self.decodedDevicePassportDescriptor(from: body) {
             let item = TrixReceivedDevicePassportDescriptor(
@@ -3461,7 +3737,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 isLocalEcho: isLocalEcho
             )
             storeDevicePassportDescriptors([item], accountJID: accountJID)
-            return nil
+            return .ignored
         }
 
         let content = Self.decodedTimelineContent(from: body)
@@ -3471,7 +3747,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             roomID: roomID,
             accountJID: accountJID
         )
-        return TrixTimelineItem(
+        return .item(TrixTimelineItem(
             id: messageID,
             roomID: roomID,
             sender: isLocalEcho ? accountJID : resolvedSenderJID,
@@ -3482,8 +3758,34 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             deliveryState: isLocalEcho ? .sent : nil,
             mentions: metadata.mentions,
             replyTo: metadata.replyTo,
-            thread: metadata.thread
-        )
+            thread: metadata.thread,
+            omemoRecipientKeyCount: Self.messageOMEMORecipientKeyCount(message)
+        ))
+    }
+
+    private func timelineItem(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        timestamp: Date,
+        fallbackID: String?,
+        connection: Connection,
+        senderJID: String? = nil
+    ) -> TrixTimelineItem? {
+        switch decodedTimelinePayload(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            timestamp: timestamp,
+            fallbackID: fallbackID,
+            connection: connection,
+            senderJID: senderJID
+        ) {
+        case .item(let item):
+            return item
+        case .backfillRequest, .ignored:
+            return nil
+        }
     }
 
     private func storeTimelineItems(_ items: [TrixTimelineItem], accountJID: String, roomID: String) {
@@ -3893,6 +4195,144 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         timelineDiagnostics[accountKey] = accountDiagnostics
     }
 
+    private func requestTimelineBackfillIfNeeded(
+        messageIDs: [String],
+        roomID: String,
+        accountJID: String,
+        requestedByDeviceID: String?,
+        recipientJIDs: [String]? = nil,
+        isGroup: Bool = false,
+        connection: Connection
+    ) async {
+        let repairRecipientJIDs = recipientJIDs ?? [roomID]
+        guard !repairRecipientJIDs.isEmpty else {
+            return
+        }
+
+        let cacheKey = Self.timelineBackfillDedupeKey(accountJID: accountJID, roomID: roomID)
+        let cachedIDs = Set(timelineItems(accountJID: accountJID, roomID: roomID).map { $0.id.lowercased() })
+        var requestedIDs = requestedTimelineBackfillIDs[cacheKey] ?? []
+        var requestIDs: [String] = []
+        for messageID in Self.uniqueMessageIDs(messageIDs) {
+            let key = messageID.lowercased()
+            guard !cachedIDs.contains(key),
+                  !requestedIDs.contains(key) else {
+                continue
+            }
+            requestedIDs.insert(key)
+            requestIDs.append(messageID)
+        }
+        guard !requestIDs.isEmpty else {
+            return
+        }
+
+        let request = TrixTimelineBackfillRequestDescriptor(
+            roomID: roomID,
+            messageIDs: requestIDs,
+            requestedByDeviceID: requestedByDeviceID
+        )
+        do {
+            try await sendTimelineBackfillControlBody(
+                try request.encodedBody(),
+                roomID: roomID,
+                recipientJIDs: repairRecipientJIDs,
+                isGroup: isGroup,
+                connection: connection,
+                idPrefix: "trix-backfill-request"
+            )
+            requestedTimelineBackfillIDs[cacheKey] = requestedIDs
+        } catch {
+            // Timeline sync must remain best-effort; a failed repair request should not hide cached messages.
+        }
+    }
+
+    private func sendTimelineBackfillResponses(
+        to requests: [TrixTimelineBackfillRequestDescriptor],
+        sourceItems: [TrixTimelineItem]?,
+        accountJID: String,
+        roomID: String,
+        recipientJIDs: [String]? = nil,
+        isGroup: Bool = false,
+        connection: Connection
+    ) async {
+        let repairRecipientJIDs = recipientJIDs ?? [roomID]
+        guard !requests.isEmpty,
+              !repairRecipientJIDs.isEmpty else {
+            return
+        }
+
+        let localResource = connection.client.boundJid?.resource
+        let relevantRequests = requests.filter { request in
+            request.roomID.caseInsensitiveCompare(roomID) == .orderedSame
+                && (request.requestedByDeviceID == nil || request.requestedByDeviceID != localResource)
+        }
+        guard !relevantRequests.isEmpty else {
+            return
+        }
+
+        let requestedIDs = Set(relevantRequests.flatMap(\.messageIDs).map { $0.lowercased() })
+        guard !requestedIDs.isEmpty else {
+            return
+        }
+
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: roomID)
+        let cachedItems = timelineItems(accountJID: accountJID, roomID: roomID)
+        let availableItems = sourceItems
+            .map { Self.mergedTimelineItems(cachedItems, $0) }
+            ?? cachedItems
+        let cacheKey = Self.timelineBackfillDedupeKey(accountJID: accountJID, roomID: roomID)
+        var sentIDs = sentTimelineBackfillIDs[cacheKey] ?? []
+        for item in availableItems where requestedIDs.contains(item.id.lowercased()) {
+            let itemKey = item.id.lowercased()
+            guard !sentIDs.contains(itemKey) else {
+                continue
+            }
+
+            let response = TrixTimelineBackfillResponseDescriptor(item: item)
+            do {
+                try await sendTimelineBackfillControlBody(
+                    try response.encodedBody(),
+                    roomID: roomID,
+                    recipientJIDs: repairRecipientJIDs,
+                    isGroup: isGroup,
+                    connection: connection,
+                    idPrefix: "trix-backfill-response"
+                )
+                sentIDs.insert(itemKey)
+            } catch {
+                continue
+            }
+        }
+        sentTimelineBackfillIDs[cacheKey] = sentIDs
+    }
+
+    private func sendTimelineBackfillControlBody(
+        _ body: String,
+        roomID: String,
+        recipientJIDs: [String],
+        isGroup: Bool,
+        connection: Connection,
+        idPrefix: String
+    ) async throws {
+        let messageID = "\(idPrefix)-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.originId = messageID
+        message.type = isGroup ? .groupchat : .chat
+        message.to = JID(roomID)
+        message.body = body
+        message.messageDelivery = .request
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipientJIDs, connection: connection)
+        encryptedMessage.messageDelivery = .request
+        try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+        if isGroup {
+            try await connection.mucModule.write(stanza: encryptedMessage)
+        } else {
+            try await connection.omemoStack.module.write(stanza: encryptedMessage)
+        }
+    }
+
     private func encodeOMEMOMessage(_ message: Message, peerJID: String, connection: Connection) async throws -> Message {
         return try await encodeOMEMOMessage(message, recipientJIDs: [peerJID], connection: connection)
     }
@@ -3901,7 +4341,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         await ensureOwnOMEMOSession(connection: connection)
         try await ensureOwnAccountDevicesTrusted(connection: connection)
         let accountJID = connection.client.connectionConfiguration.userJid.stringValue
-        let recipients = Self.uniqueRecipientJIDs(recipientJIDs + [accountJID]).map(BareJID.init)
+        let recipients = try Self.omemoEncryptionRecipientJIDs(recipientJIDs, accountJID: accountJID).map(BareJID.init)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Message, Error>) in
             connection.omemoStack.module.encode(message: message, for: recipients) { result in
                 switch result {
@@ -3930,7 +4370,19 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
     private func refreshDeviceIdentities(for userID: String, connection: Connection) async throws {
         let bareJID = BareJID(userID)
+        if let deviceIDs = try? await publishedOMEMODeviceIDs(for: bareJID, connection: connection) {
+            await syncPublishedOMEMODeviceIdentities(
+                deviceIDs,
+                for: bareJID.stringValue,
+                connection: connection
+            )
+            return
+        }
 
+        try await refreshCachedDeviceIdentities(for: bareJID, connection: connection)
+    }
+
+    private func refreshCachedDeviceIdentities(for bareJID: BareJID, connection: Connection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.omemoStack.module.addresses(for: [bareJID]) { result in
                 switch result {
@@ -3939,6 +4391,73 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 case .failure:
                     continuation.resume(throwing: TrixClientError.e2eeUnavailable)
                 }
+            }
+        }
+    }
+
+    private func publishedOMEMODeviceIDs(for bareJID: BareJID, connection: Connection) async throws -> [Int32] {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Int32], Error>) in
+            connection.pubSubModule.retrieveItems(
+                from: bareJID,
+                for: OMEMOModule.DEVICES_LIST_NODE,
+                limit: .lastItems(1)
+            ) { result in
+                switch result {
+                case .success(let items):
+                    guard let list = items.items.first?.payload,
+                          list.name == "list",
+                          list.xmlns == OMEMOModule.XMLNS else {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
+                    let deviceIDs = list.mapChildren { element -> Int32? in
+                        guard let value = element.getAttribute("id") else {
+                            return nil
+                        }
+                        return Int32(value)
+                    }
+                    continuation.resume(returning: Array(Set(deviceIDs)).sorted())
+                case .failure:
+                    continuation.resume(throwing: TrixClientError.e2eeUnavailable)
+                }
+            }
+        }
+    }
+
+    private func syncPublishedOMEMODeviceIdentities(
+        _ deviceIDs: [Int32],
+        for userID: String,
+        connection: Connection
+    ) async {
+        let activeDeviceIDs = Set(deviceIDs)
+        let localDeviceID = Int32(bitPattern: connection.omemoStack.store.localRegistrationId())
+        for deviceID in activeDeviceIDs where deviceID != localDeviceID {
+            let address = SignalAddress(name: userID, deviceId: deviceID)
+            if !connection.omemoStack.store.containsSessionRecord(forAddress: address) {
+                await buildOMEMOSession(for: address, connection: connection)
+            }
+        }
+
+        for deviceID in activeDeviceIDs {
+            let address = SignalAddress(name: userID, deviceId: deviceID)
+            _ = connection.omemoStack.store.setStatus(active: true, forIdentity: address)
+        }
+
+        for identity in connection.omemoStack.store.identities(forName: userID)
+            where !activeDeviceIDs.contains(identity.address.deviceId) {
+            _ = connection.omemoStack.store.setStatus(active: false, forIdentity: identity.address)
+        }
+    }
+
+    private func buildOMEMOSession(for address: SignalAddress, connection: Connection) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let oneShot = OneShotVoidContinuation(continuation)
+            connection.omemoStack.module.buildSession(forAddress: address) {
+                oneShot.resume()
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                oneShot.resume()
             }
         }
     }
@@ -4146,6 +4665,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
               !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
             throw TrixClientError.omemoEncryptionFailed
         }
+        let omemoRecipientKeyCount = Self.messageOMEMORecipientKeyCount(encryptedMessage)
 
         try await connection.mucModule.write(stanza: encryptedMessage)
 
@@ -4160,7 +4680,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             deliveryState: .sent,
             mentions: metadata.mentions,
             replyTo: metadata.replyTo,
-            thread: Self.localThreadReference(metadata.thread, messageID: messageID)
+            thread: Self.localThreadReference(metadata.thread, messageID: messageID),
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
         storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
         if let thread = item.thread {
@@ -4240,6 +4761,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
               !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
             throw TrixClientError.omemoEncryptionFailed
         }
+        let omemoRecipientKeyCount = Self.messageOMEMORecipientKeyCount(encryptedMessage)
 
         try await connection.mucModule.write(stanza: encryptedMessage)
 
@@ -4251,7 +4773,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             body: Self.attachmentTimelineBody(for: attachment),
             isLocalEcho: true,
             attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
-            deliveryState: .sent
+            deliveryState: .sent,
+            omemoRecipientKeyCount: omemoRecipientKeyCount
         )
         storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
         updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
@@ -4432,6 +4955,31 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
         for recipient in recipients where !connection.omemoStack.store.hasTrustedActiveDevice(forName: recipient) {
             _ = try? await refreshPeerDeviceIdentities(userID: recipient, session: session)
+        }
+        guard recipients.allSatisfy({ connection.omemoStack.store.hasTrustedActiveDevice(forName: $0) }) else {
+            throw TrixClientError.groupOmemoDeviceTrustRequired
+        }
+
+        return recipients
+    }
+
+    private func validatedGroupBackfillRecipients(
+        roomID: String,
+        accountJID: String,
+        knownMemberUserIDs: Set<String>,
+        connection: Connection
+    ) async throws -> [String] {
+        let recipients = try Self.timelineBackfillRepairRecipientJIDs(
+            roomID: roomID,
+            accountJID: accountJID,
+            knownMemberUserIDs: knownMemberUserIDs
+        )
+        guard !recipients.isEmpty else {
+            throw TrixClientError.groupOmemoRecipientSetUnavailable
+        }
+
+        for recipient in recipients where !connection.omemoStack.store.hasTrustedActiveDevice(forName: recipient) {
+            _ = try? await refreshDeviceIdentities(for: recipient, connection: connection)
         }
         guard recipients.allSatisfy({ connection.omemoStack.store.hasTrustedActiveDevice(forName: $0) }) else {
             throw TrixClientError.groupOmemoDeviceTrustRequired
@@ -5686,7 +6234,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 replacementMessageID: update.replacementMessageID
             ),
             retractionState: item.retractionState,
-            readState: item.readState
+            readState: item.readState,
+            omemoRecipientKeyCount: item.omemoRecipientKeyCount
         )
         return updatedItems
     }
@@ -6094,6 +6643,68 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         return recipients
     }
 
+    static func omemoEncryptionRecipientJIDs(_ recipientJIDs: [String], accountJID: String) throws -> [String] {
+        let normalizedAccountJID = try normalizedXMPPJID(accountJID)
+        return uniqueRecipientJIDs(recipientJIDs + [normalizedAccountJID])
+    }
+
+    static func timelineBackfillRepairRecipientJIDs(
+        roomID: String,
+        accountJID: String,
+        knownMemberUserIDs: Set<String>
+    ) throws -> [String] {
+        let normalizedRoomID = try normalizedRoomID(roomID)
+        let normalizedAccountJID = try normalizedXMPPJID(accountJID)
+        if Self.isMUCJID(normalizedRoomID) {
+            return uniqueRecipientJIDs(
+                knownMemberUserIDs
+                    .compactMap { try? normalizedXMPPJID($0) }
+                    .filter { $0 != normalizedAccountJID && $0 != normalizedRoomID }
+                    .sorted()
+            )
+        }
+        return uniqueRecipientJIDs([normalizedRoomID])
+    }
+
+    private static func uniqueMessageIDs(_ messageIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var ids: [String] = []
+        for messageID in messageIDs {
+            let trimmed = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = trimmed.lowercased()
+            guard !trimmed.isEmpty,
+                  seen.insert(key).inserted else {
+                continue
+            }
+            ids.append(trimmed)
+        }
+        return ids
+    }
+
+    private static func timelineBackfillCandidateIDs(from message: Message, fallbackID: String?, roomID: String) -> [String] {
+        var ids: [String] = []
+        if let originID = trimmedNonEmpty(message.originId) {
+            ids.append(originID)
+        }
+        if let id = trimmedNonEmpty(message.id) {
+            ids.append(id)
+        }
+        if let stanzaID = message.stanzaId?[BareJID(roomID)] {
+            ids.append(stanzaID)
+        }
+        if let stanzaIDs = message.stanzaId?.values {
+            ids.append(contentsOf: Array(stanzaIDs))
+        }
+        if let fallbackID = trimmedNonEmpty(fallbackID) {
+            ids.append(fallbackID)
+        }
+        return uniqueMessageIDs(ids)
+    }
+
+    private static func timelineBackfillDedupeKey(accountJID: String, roomID: String) -> String {
+        "\(accountJID.lowercased())|\(roomID.lowercased())"
+    }
+
     private static func groupRoomLocalpart(from name: String) -> String {
         let folded = name
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
@@ -6277,6 +6888,28 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             .contains { $0.getAttribute("rid") == recipientDeviceID }
     }
 
+    private static func messageOMEMORecipientKeyCount(_ message: Message) -> Int? {
+        #if DEBUG
+        guard let header = message
+            .firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS)?
+            .firstChild(name: "header") else {
+            return nil
+        }
+
+        return header
+            .filterChildren(name: "key", xmlns: nil)
+            .count
+        #else
+        return nil
+        #endif
+    }
+
+    private static func messageHasOMEMOPayload(_ message: Message) -> Bool {
+        message
+            .firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS)?
+            .firstChild(name: "payload") != nil
+    }
+
     private static func messageTimestamp(_ message: Message, fallback: Date) -> Date {
         guard let delay = message.firstChild(name: "delay", xmlns: "urn:xmpp:delay"),
               let stamp = delay.getAttribute("stamp"),
@@ -6357,7 +6990,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             thread: item.thread ?? existingItem.thread,
             editState: item.editState ?? existingItem.editState,
             retractionState: item.retractionState ?? existingItem.retractionState,
-            readState: item.readState == .empty ? existingItem.readState : item.readState
+            readState: item.readState == .empty ? existingItem.readState : item.readState,
+            omemoRecipientKeyCount: item.omemoRecipientKeyCount ?? existingItem.omemoRecipientKeyCount
         )
     }
 
