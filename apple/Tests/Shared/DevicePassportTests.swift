@@ -25,6 +25,28 @@ final class DevicePassportTests: XCTestCase {
         XCTAssertEqual(viewModel.currentDeviceBlockMessage, "Confirm this device on another Trix device before sending private messages.")
     }
 
+    func testApprovalRequestedDeviceWithoutActiveRequestCreatesFreshApprovalRequest() async {
+        let snapshot = TrixDevicePassportSnapshot(
+            userID: Self.session.userID,
+            generation: 1,
+            currentDevice: Self.passportDevice(deviceID: "2002", state: .approvalRequested),
+            currentApprovalRequest: nil,
+            pendingApprovalRequests: [],
+            serverStateIsTrustAuthority: false
+        )
+        let viewModel = DevicePassportViewModel()
+        let service = RecordingDevicePassportService(snapshot: snapshot)
+
+        await viewModel.syncCurrentDevice(
+            session: Self.session,
+            deviceVerificationService: StaticDeviceVerificationService(),
+            passportService: service
+        )
+
+        XCTAssertEqual(service.createdApprovalDeviceIDs, ["2002"])
+        XCTAssertEqual(viewModel.currentApprovalChallenge, "A1B2C3D4")
+    }
+
     func testCurrentDeviceMetadataUsesXMPPJIDAndRevokedDevicesStayReadOnly() throws {
         let request = try TrixDevicePassportCurrentDeviceMetadata.request(
             session: Self.session,
@@ -232,6 +254,66 @@ final class DevicePassportTests: XCTestCase {
             isActive: true,
             isLocalDevice: false
         )
+    }
+}
+
+private final class RecordingDevicePassportService: TrixDevicePassportService, @unchecked Sendable {
+    private var snapshot: TrixDevicePassportSnapshot
+    private(set) var createdApprovalDeviceIDs: [String] = []
+
+    init(snapshot: TrixDevicePassportSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func upsertCurrentDevice(_ request: TrixDevicePassportCurrentDeviceRequest, session: TrixSession) async throws -> TrixDevicePassportDevice {
+        guard let currentDevice = snapshot.currentDevice else {
+            throw TrixClientError.devicePassportUnavailable
+        }
+        return currentDevice
+    }
+
+    func state(session: TrixSession, deviceID: String?) async throws -> TrixDevicePassportSnapshot {
+        snapshot
+    }
+
+    func createApprovalRequest(deviceID: String, session: TrixSession) async throws -> TrixDevicePassportApprovalRequest {
+        createdApprovalDeviceIDs.append(deviceID)
+        let approval = TrixDevicePassportApprovalRequest(
+            id: "mock-approval",
+            userID: session.userID,
+            deviceID: deviceID,
+            generation: 1,
+            challenge: "A1B2C3D4",
+            status: .pending,
+            createdAtUnix: 0,
+            expiresAtUnix: 600,
+            decidedAtUnix: nil,
+            decidedByDeviceID: nil
+        )
+        snapshot = TrixDevicePassportSnapshot(
+            userID: snapshot.userID,
+            generation: snapshot.generation,
+            currentDevice: snapshot.currentDevice,
+            currentApprovalRequest: approval,
+            pendingApprovalRequests: snapshot.pendingApprovalRequests,
+            serverStateIsTrustAuthority: snapshot.serverStateIsTrustAuthority
+        )
+        return approval
+    }
+
+    func approveApprovalRequest(id: String, approverDeviceID: String, session: TrixSession) async throws -> TrixDevicePassportApproveResult {
+        throw TrixClientError.devicePassportUnavailable
+    }
+
+    func declineApprovalRequest(id: String, approverDeviceID: String, session: TrixSession) async throws -> TrixDevicePassportApprovalRequest {
+        throw TrixClientError.devicePassportUnavailable
+    }
+
+    func directoryClaims(since cursor: Int64, session: TrixSession) async throws -> TrixDevicePassportDirectoryClaimsPage {
+        TrixDevicePassportDirectoryClaimsPage(recipientUserID: session.userID, claims: [], nextCursor: cursor)
+    }
+
+    func dismissNotice(targetUserID: String, severity: TrixDevicePassportNoticeSeverity, session: TrixSession) async throws {
     }
 }
 

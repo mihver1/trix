@@ -332,14 +332,15 @@ notification remained generic with no plaintext message, filename, media-key, or
 decrypted-content fields.
 
 On 2026-06-01 the live VPS enabled ejabberd `mod_push_keepalive` with explicit
-stream-management ACK/resume timeouts. This keeps disconnected push-enabled
-sessions eligible for XEP-0357 wakeups without exposing APNs tokens or decrypted
-message content; post-restart component publish smoke reached the gateway and
-returned APNs delivery success without registration failures. The same rollout
-later switched ejabberd `mod_push.notify_on` to `all` after real encrypted
-message sends did not trigger gateway publishes under the narrower `messages`
-mode. This may increase generic wake frequency, but the gateway sends XEP-0357
-component publishes as silent APNs background wakes, keeps the payload
+stream-management ACK/resume timeouts. For the testing phase,
+`mod_push_keepalive.resume_timeout` is `720 hours` (30 days) so disconnected
+push-enabled sessions can survive multi-day feature gaps without exposing APNs
+tokens or decrypted message content; post-restart component publish smoke reached
+the gateway and returned APNs delivery success without registration failures.
+The same rollout later switched ejabberd `mod_push.notify_on` to `all` after
+real encrypted message sends did not trigger gateway publishes under the narrower
+`messages` mode. This may increase generic wake frequency, but the gateway sends
+XEP-0357 component publishes as silent APNs background wakes, keeps the payload
 plaintext-free, and leaves visible notification decisions to the Apple client
 after local sync. The push gateway also rate-limits XMPP component sync wakes
 per registration node with `TRIX_PUSH_XMPP_SYNC_MIN_INTERVAL_SECONDS` so repeated
