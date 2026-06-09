@@ -51,7 +51,7 @@ final class DevicePassportViewModel: ObservableObject {
             let request = try TrixDevicePassportCurrentDeviceMetadata.request(session: session, status: status)
             let device = try await passportService.upsertCurrentDevice(request, session: session)
             var loadedSnapshot = try await passportService.state(session: session, deviceID: device.deviceID)
-            if loadedSnapshot.currentDevice?.state == .pending {
+            if loadedSnapshot.needsCurrentDeviceApprovalRequest {
                 _ = try await passportService.createApprovalRequest(deviceID: device.deviceID, session: session)
                 loadedSnapshot = try await passportService.state(session: session, deviceID: device.deviceID)
             }

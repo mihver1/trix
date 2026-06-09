@@ -316,6 +316,11 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let reachedArchiveStart: Bool
     }
 
+    struct MAMArchiveScanPolicy: Equatable, Sendable {
+        let maxPages: Int
+        let targetPayloadEvents: Int?
+    }
+
     private struct MAMArchivePage {
         let events: [ArchivedMessageSnapshot]
         let queryResult: MessageArchiveManagementModule.QueryResult
@@ -733,6 +738,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private static let mamArchivePageSize = 50
     private static let mamArchiveMaxPages = 50
     private static let mamArchiveTargetPayloadEvents = 50
+    private static let mamArchiveBackfillRepairMaxPages = 120
     private static let mamArchiveUnfilteredFallbackMaxPages = 50
     private static let maxCachedCallDescriptors = 100
     private static let maxCachedDevicePassportDescriptors = 200
@@ -752,6 +758,20 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private static let notificationProfilesItemID = "profiles"
     private static let readMarkersNode = "urn:softgrid:trix:read-markers:1"
     private static let readMarkersItemID = "markers"
+
+    private static func recentTimelineArchiveScanPolicy() -> MAMArchiveScanPolicy {
+        MAMArchiveScanPolicy(
+            maxPages: Self.mamArchiveMaxPages,
+            targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
+        )
+    }
+
+    static func dmTimelineBackfillArchiveScanPolicy() -> MAMArchiveScanPolicy {
+        MAMArchiveScanPolicy(
+            maxPages: Self.mamArchiveBackfillRepairMaxPages,
+            targetPayloadEvents: nil
+        )
+    }
 
     init(
         omemoPersistence: TrixOMEMOPersistence = .keychain,
@@ -1317,7 +1337,12 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             }
         } else {
             do {
-                let archive = try await archivedTimelineResult(peerJID: peerJID, accountJID: accountJID, connection: connection)
+                let archive = try await archivedTimelineResult(
+                    peerJID: peerJID,
+                    accountJID: accountJID,
+                    connection: connection,
+                    scanPolicy: Self.dmTimelineBackfillArchiveScanPolicy()
+                )
                 if !archive.items.isEmpty {
                     storeTimelineItems(archive.items, accountJID: accountJID, roomID: peerJID)
                 }
@@ -2698,15 +2723,17 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private func archivedTimelineResult(
         peerJID: String,
         accountJID: String,
-        connection: Connection
+        connection: Connection,
+        scanPolicy: MAMArchiveScanPolicy? = nil
     ) async throws -> ArchivedTimelineResult {
+        let scanPolicy = scanPolicy ?? Self.recentTimelineArchiveScanPolicy()
         let peerBareJID = BareJID(peerJID)
         connection.omemoStack.module.mamSyncStarted(for: peerBareJID)
         defer {
             connection.omemoStack.module.mamSyncFinished(for: peerBareJID)
         }
 
-        let filteredArchive = try await archiveEvents(peerJID: peerJID, connection: connection)
+        let filteredArchive = try await archiveEvents(peerJID: peerJID, connection: connection, scanPolicy: scanPolicy)
         var events = filteredArchive.events
         var rawCount = filteredArchive.rawCount
         var pagesScanned = filteredArchive.pagesScanned
@@ -2718,7 +2745,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             let unfilteredArchive = try await unfilteredArchiveEvents(
                 matchingPeerJID: peerJID,
                 accountJID: accountJID,
-                connection: connection
+                connection: connection,
+                scanPolicy: scanPolicy
             )
             rawCount = unfilteredArchive.rawCount
             pagesScanned = unfilteredArchive.pagesScanned
@@ -2742,22 +2770,28 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         let peerKey = peerJID.lowercased()
         for archived in events {
             let hasOMEMOPayload = Self.messageHasOMEMOPayload(archived.message)
+            let senderBareJID = archived.message.from?.bareJid.stringValue
+            let backfillCandidateIDs = Self.timelineBackfillCandidateIDs(
+                from: archived.message,
+                fallbackID: archived.messageID,
+                roomID: peerJID
+            )
             if archived.message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil {
                 encryptedCount += 1
             }
             let hasLocalKey = Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID)
             if hasLocalKey {
                 localKeyCount += 1
-            } else if hasOMEMOPayload {
-                missingLocalKeyMessageIDs.append(
-                    contentsOf: Self.timelineBackfillCandidateIDs(
-                        from: archived.message,
-                        fallbackID: archived.messageID,
-                        roomID: peerJID
-                    )
-                )
+            } else if Self.shouldRequestTimelineBackfill(
+                hasOMEMOPayload: hasOMEMOPayload,
+                hasLocalRecipientKey: false,
+                decodedPayloadWasIgnored: false,
+                senderJID: senderBareJID,
+                accountJID: accountJID
+            ) {
+                missingLocalKeyMessageIDs.append(contentsOf: backfillCandidateIDs)
             }
-            switch archived.message.from?.bareJid.stringValue.lowercased() {
+            switch senderBareJID?.lowercased() {
             case accountKey:
                 accountSenderCount += 1
                 if !hasLocalKey {
@@ -2831,6 +2865,16 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             case .backfillRequest(let request):
                 backfillRequests.append(request)
             case .ignored:
+                if hasLocalKey,
+                   Self.shouldRequestTimelineBackfill(
+                    hasOMEMOPayload: hasOMEMOPayload,
+                    hasLocalRecipientKey: true,
+                    decodedPayloadWasIgnored: true,
+                    senderJID: senderBareJID,
+                    accountJID: accountJID
+                   ) {
+                    missingLocalKeyMessageIDs.append(contentsOf: backfillCandidateIDs)
+                }
                 break
             }
         }
@@ -2906,14 +2950,20 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
 
             let hasOMEMOPayload = Self.messageHasOMEMOPayload(archived.message)
             let hasLocalKey = Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID)
-            if !hasLocalKey && hasOMEMOPayload {
-                missingLocalKeyMessageIDs.append(
-                    contentsOf: Self.timelineBackfillCandidateIDs(
-                        from: archived.message,
-                        fallbackID: archived.messageID,
-                        roomID: roomID
-                    )
-                )
+            let backfillCandidateIDs = Self.timelineBackfillCandidateIDs(
+                from: archived.message,
+                fallbackID: archived.messageID,
+                roomID: roomID
+            )
+            if !hasLocalKey,
+               Self.shouldRequestTimelineBackfill(
+                hasOMEMOPayload: hasOMEMOPayload,
+                hasLocalRecipientKey: false,
+                decodedPayloadWasIgnored: false,
+                senderJID: senderJID,
+                accountJID: accountJID
+            ) {
+                missingLocalKeyMessageIDs.append(contentsOf: backfillCandidateIDs)
             }
 
             if let senderJID,
@@ -2984,6 +3034,16 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             case .backfillRequest(let request):
                 backfillRequests.append(request)
             case .ignored:
+                if hasLocalKey,
+                   Self.shouldRequestTimelineBackfill(
+                    hasOMEMOPayload: hasOMEMOPayload,
+                    hasLocalRecipientKey: true,
+                    decodedPayloadWasIgnored: true,
+                    senderJID: senderJID,
+                    accountJID: accountJID
+                   ) {
+                    missingLocalKeyMessageIDs.append(contentsOf: backfillCandidateIDs)
+                }
                 break
             }
         }
@@ -3034,21 +3094,33 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     }
 
     private func archiveEvents(peerJID: String?, connection: Connection) async throws -> MAMArchiveResult {
+        return try await archiveEvents(
+            peerJID: peerJID,
+            connection: connection,
+            scanPolicy: Self.recentTimelineArchiveScanPolicy()
+        )
+    }
+
+    private func archiveEvents(
+        peerJID: String?,
+        connection: Connection,
+        scanPolicy: MAMArchiveScanPolicy
+    ) async throws -> MAMArchiveResult {
         do {
             return try await archiveEvents(
                 version: .MAM2,
                 peerJID: peerJID,
                 connection: connection,
-                maxPages: Self.mamArchiveMaxPages,
-                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
+                maxPages: scanPolicy.maxPages,
+                targetPayloadEvents: scanPolicy.targetPayloadEvents
             )
         } catch {
             return try await archiveEvents(
                 version: .MAM1,
                 peerJID: peerJID,
                 connection: connection,
-                maxPages: Self.mamArchiveMaxPages,
-                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
+                maxPages: scanPolicy.maxPages,
+                targetPayloadEvents: scanPolicy.targetPayloadEvents
             )
         }
     }
@@ -3056,27 +3128,28 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
     private func unfilteredArchiveEvents(
         matchingPeerJID: String,
         accountJID: String,
-        connection: Connection
+        connection: Connection,
+        scanPolicy: MAMArchiveScanPolicy
     ) async throws -> MAMArchiveResult {
         do {
             return try await archiveEvents(
                 version: .MAM2,
                 peerJID: nil,
                 connection: connection,
-                maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
+                maxPages: min(scanPolicy.maxPages, Self.mamArchiveUnfilteredFallbackMaxPages),
                 matchingPeerJID: matchingPeerJID,
                 matchingAccountJID: accountJID,
-                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
+                targetPayloadEvents: scanPolicy.targetPayloadEvents
             )
         } catch {
             return try await archiveEvents(
                 version: .MAM1,
                 peerJID: nil,
                 connection: connection,
-                maxPages: Self.mamArchiveUnfilteredFallbackMaxPages,
+                maxPages: min(scanPolicy.maxPages, Self.mamArchiveUnfilteredFallbackMaxPages),
                 matchingPeerJID: matchingPeerJID,
                 matchingAccountJID: accountJID,
-                targetPayloadEvents: Self.mamArchiveTargetPayloadEvents
+                targetPayloadEvents: scanPolicy.targetPayloadEvents
             )
         }
     }
@@ -3932,7 +4005,8 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             events = try await unfilteredArchiveEvents(
                 matchingPeerJID: roomID,
                 accountJID: accountJID,
-                connection: connection
+                connection: connection,
+                scanPolicy: Self.recentTimelineArchiveScanPolicy()
             ).events
         }
 
@@ -6679,6 +6753,28 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             ids.append(trimmed)
         }
         return ids
+    }
+
+    static func shouldRequestTimelineBackfill(
+        hasOMEMOPayload: Bool,
+        hasLocalRecipientKey: Bool,
+        decodedPayloadWasIgnored: Bool,
+        senderJID: String?,
+        accountJID: String
+    ) -> Bool {
+        guard hasOMEMOPayload else {
+            return false
+        }
+        guard hasLocalRecipientKey else {
+            return true
+        }
+        guard decodedPayloadWasIgnored,
+              let senderJID else {
+            return false
+        }
+
+        let senderBareJID = senderJID.split(separator: "/", maxSplits: 1).first.map(String.init) ?? senderJID
+        return senderBareJID.caseInsensitiveCompare(accountJID) == .orderedSame
     }
 
     private static func timelineBackfillCandidateIDs(from message: Message, fallbackID: String?, roomID: String) -> [String] {
