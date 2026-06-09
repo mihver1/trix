@@ -64,6 +64,11 @@ final class TrixLocalProfileConfigurationTests: XCTestCase {
         XCTAssertTrue(XMPPLiveSmokeRunner.supportsModeForTesting("dm-backfill-repair"))
     }
 
+    func testLiveSmokeRunnerRecognizesDevicePassportMode() {
+        XCTAssertTrue(XMPPLiveSmokeRunner.supportsModeForTesting("device-passport"))
+        XCTAssertFalse(XMPPLiveSmokeRunner.canTrustAllActiveDevicesForTesting("device-passport"))
+    }
+
     func testTimelineRestartCanWarmPeerDeviceForDisposableAccounts() {
         XCTAssertTrue(XMPPLiveSmokeRunner.canWarmPeerDeviceForTesting("timeline-restart"))
     }

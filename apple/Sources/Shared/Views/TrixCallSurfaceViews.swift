@@ -156,33 +156,39 @@ private struct TrixActiveCallBar: View {
     @ObservedObject var model: TrixAppModel
     let presentation: TrixActiveCallPresentation
     let placement: TrixActiveCallSurfacePlacement
+    @ObservedObject private var audioLevelRegistry = TrixCallAudioLevelRegistry.shared
+    @ObservedObject private var mediaQualityRegistry = TrixCallMediaQualityRegistry.shared
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(0.13), in: Circle())
-                    .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 32, height: 32)
+                        .background(tint.opacity(0.13), in: Circle())
+                        .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(presentation.roomName)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(presentation.roomName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
 
-                    Text(statusText(now: context.date))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(statusText(now: context.date))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    controls
                 }
 
-                Spacer(minLength: 8)
-
-                controls
+                TrixCallMediaQualityStrip(state: presentation.state, tint: tint)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -244,8 +250,8 @@ private struct TrixActiveCallBar: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isWorking || presentation.state.localAudioState == .unavailable)
-                .help(presentation.state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
-                .accessibilityLabel(presentation.state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+                .help(microphoneHelp)
+                .accessibilityLabel(microphoneHelp)
 
                 if presentation.state.kind == .directVideo {
                     Button {
@@ -261,8 +267,8 @@ private struct TrixActiveCallBar: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isWorking || presentation.state.localCameraState == .unavailable)
-                    .help(presentation.state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
-                    .accessibilityLabel(presentation.state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
+                    .help(cameraHelp)
+                    .accessibilityLabel(cameraHelp)
                 }
 
                 Button(role: .destructive) {
@@ -284,6 +290,28 @@ private struct TrixActiveCallBar: View {
 
     private var isWorking: Bool {
         presentation.state.isActing || model.callViewModel.isActing(roomID: presentation.roomID)
+    }
+
+    private var microphoneHelp: String {
+        switch presentation.state.localAudioState {
+        case .unavailable:
+            return "Microphone unavailable or permission denied"
+        case .muted:
+            return "Unmute microphone"
+        case .unmuted:
+            return "Mute microphone"
+        }
+    }
+
+    private var cameraHelp: String {
+        switch presentation.state.localCameraState {
+        case .unavailable:
+            return "Camera unavailable or permission denied"
+        case .off:
+            return "Turn camera on"
+        case .on:
+            return "Turn camera off"
+        }
     }
 
     private var barBackground: Color {
@@ -324,9 +352,16 @@ private struct TrixActiveCallBar: View {
 
     private func statusText(now: Date) -> String {
         let scope = presentation.state.kind == .groupVoice ? "Encrypted group voice" : "Encrypted direct call"
-        let phase = phaseText(now: now)
-        let audio = audioText
-        return "\(scope) · \(phase) · \(audio)"
+        let parts = [
+            scope,
+            phaseText(now: now),
+            localAudioText(now: now),
+            remoteMediaText,
+        ].compactMap { value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func accessibilityLabel(now: Date) -> String {
@@ -358,14 +393,62 @@ private struct TrixActiveCallBar: View {
         }
     }
 
-    private var audioText: String {
-        switch presentation.state.localAudioState {
-        case .muted:
-            return "Mic muted"
-        case .unmuted:
-            return "Mic on"
+    private func localAudioText(now: Date) -> String {
+        switch audioLevelRegistry.localInputSignalState(
+            callID: presentation.state.callID,
+            audioState: presentation.state.localAudioState,
+            startedAt: presentation.state.startedAt,
+            now: now
+        ) {
         case .unavailable:
             return "Mic unavailable"
+        case .muted:
+            return "Mic muted"
+        case .detecting:
+            return "Checking mic"
+        case .active:
+            return "Mic input ok"
+        case .low:
+            return "Low mic input"
+        }
+    }
+
+    private var remoteMediaText: String {
+        guard presentation.state.phase.isActiveLike || presentation.state.phase == .connecting else {
+            return ""
+        }
+
+        let snapshot = mediaQualityRegistry.snapshot(for: presentation.state.callID)
+        if presentation.state.kind == .groupVoice {
+            return remoteAudioText(snapshot.remoteAudioStatus)
+        }
+
+        switch snapshot.remoteVideoStatus {
+        case .receiving:
+            return "Remote video ok"
+        case .waiting:
+            return "Waiting for video"
+        case .muted:
+            return "Remote camera off"
+        case .paused:
+            return "Video paused"
+        case .unavailable:
+            return remoteAudioText(snapshot.remoteAudioStatus)
+        }
+    }
+
+    private func remoteAudioText(_ status: TrixCallMediaSignalStatus) -> String {
+        switch status {
+        case .receiving:
+            return "Remote audio ok"
+        case .waiting:
+            return "Waiting for audio"
+        case .muted:
+            return "Remote muted"
+        case .paused:
+            return "Audio paused"
+        case .unavailable:
+            return ""
         }
     }
 
@@ -380,6 +463,236 @@ private struct TrixActiveCallBar: View {
         }
 
         return "\(minutes):\(String(format: "%02d", remainingSeconds))"
+    }
+}
+
+struct TrixCallMediaQualityStrip: View {
+    let state: TrixCallLifecycleState
+    let tint: Color
+    @ObservedObject private var audioLevelRegistry = TrixCallAudioLevelRegistry.shared
+    @ObservedObject private var mediaQualityRegistry = TrixCallMediaQualityRegistry.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            let items = qualityItems(now: context.date)
+            if !items.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(items) { item in
+                            TrixCallMediaQualityChip(item: item)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(items.map(\.label).joined(separator: ", "))
+            }
+        }
+    }
+
+    private func qualityItems(now: Date) -> [TrixCallMediaQualityItem] {
+        guard state.phase.isActiveLike || state.phase == .connecting else {
+            return []
+        }
+
+        let snapshot = mediaQualityRegistry.snapshot(for: state.callID)
+        var items: [TrixCallMediaQualityItem] = [
+            localInputItem(now: now),
+            e2eeItem,
+        ]
+
+        if snapshot.relayOnly {
+            items.append(TrixCallMediaQualityItem(
+                id: "relay",
+                label: "Relay-only",
+                systemImage: "network",
+                tint: .blue
+            ))
+        }
+
+        if let remoteAudioItem = remoteAudioItem(snapshot.remoteAudioStatus) {
+            items.append(remoteAudioItem)
+        }
+
+        if state.kind == .directVideo,
+           let remoteVideoItem = remoteVideoItem(snapshot.remoteVideoStatus) {
+            items.append(remoteVideoItem)
+        }
+
+        return items
+    }
+
+    private func localInputItem(now: Date) -> TrixCallMediaQualityItem {
+        switch audioLevelRegistry.localInputSignalState(
+            callID: state.callID,
+            audioState: state.localAudioState,
+            startedAt: state.startedAt,
+            now: now
+        ) {
+        case .unavailable:
+            return TrixCallMediaQualityItem(
+                id: "mic-unavailable",
+                label: "Mic unavailable",
+                systemImage: "mic.slash.fill",
+                tint: .orange
+            )
+        case .muted:
+            return TrixCallMediaQualityItem(
+                id: "mic-muted",
+                label: "Muted",
+                systemImage: "mic.slash.fill",
+                tint: .secondary
+            )
+        case .detecting:
+            return TrixCallMediaQualityItem(
+                id: "mic-detecting",
+                label: "Checking mic",
+                systemImage: "waveform",
+                tint: .secondary
+            )
+        case .active:
+            return TrixCallMediaQualityItem(
+                id: "mic-active",
+                label: "Mic input",
+                systemImage: "mic.fill",
+                tint: tint
+            )
+        case .low:
+            return TrixCallMediaQualityItem(
+                id: "mic-low",
+                label: "Low mic input",
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange
+            )
+        }
+    }
+
+    private var e2eeItem: TrixCallMediaQualityItem {
+        switch state.e2eeState {
+        case .active:
+            return TrixCallMediaQualityItem(
+                id: "e2ee-active",
+                label: "Media E2EE",
+                systemImage: "lock.fill",
+                tint: .green
+            )
+        case .required:
+            return TrixCallMediaQualityItem(
+                id: "e2ee-required",
+                label: "E2EE setup",
+                systemImage: "lock.fill",
+                tint: .orange
+            )
+        case .failed:
+            return TrixCallMediaQualityItem(
+                id: "e2ee-failed",
+                label: "E2EE failed",
+                systemImage: "lock.slash.fill",
+                tint: .red
+            )
+        case .none:
+            return TrixCallMediaQualityItem(
+                id: "e2ee-none",
+                label: "No media E2EE",
+                systemImage: "lock.slash",
+                tint: .secondary
+            )
+        }
+    }
+
+    private func remoteAudioItem(_ status: TrixCallMediaSignalStatus) -> TrixCallMediaQualityItem? {
+        switch status {
+        case .unavailable:
+            return nil
+        case .waiting:
+            return TrixCallMediaQualityItem(
+                id: "remote-audio-waiting",
+                label: "Waiting audio",
+                systemImage: "speaker.wave.2.fill",
+                tint: .orange
+            )
+        case .receiving:
+            return TrixCallMediaQualityItem(
+                id: "remote-audio-receiving",
+                label: "Audio receiving",
+                systemImage: "speaker.wave.2.fill",
+                tint: .green
+            )
+        case .muted:
+            return TrixCallMediaQualityItem(
+                id: "remote-audio-muted",
+                label: "Remote muted",
+                systemImage: "speaker.slash.fill",
+                tint: .secondary
+            )
+        case .paused:
+            return TrixCallMediaQualityItem(
+                id: "remote-audio-paused",
+                label: "Audio paused",
+                systemImage: "pause.circle.fill",
+                tint: .orange
+            )
+        }
+    }
+
+    private func remoteVideoItem(_ status: TrixCallMediaSignalStatus) -> TrixCallMediaQualityItem? {
+        switch status {
+        case .unavailable:
+            return nil
+        case .waiting:
+            return TrixCallMediaQualityItem(
+                id: "remote-video-waiting",
+                label: "Waiting video",
+                systemImage: "video.fill",
+                tint: .orange
+            )
+        case .receiving:
+            return TrixCallMediaQualityItem(
+                id: "remote-video-receiving",
+                label: "Video receiving",
+                systemImage: "video.fill",
+                tint: .green
+            )
+        case .muted:
+            return TrixCallMediaQualityItem(
+                id: "remote-video-muted",
+                label: "Camera off",
+                systemImage: "video.slash.fill",
+                tint: .secondary
+            )
+        case .paused:
+            return TrixCallMediaQualityItem(
+                id: "remote-video-paused",
+                label: "Video paused",
+                systemImage: "pause.circle.fill",
+                tint: .orange
+            )
+        }
+    }
+}
+
+private struct TrixCallMediaQualityItem: Identifiable {
+    let id: String
+    let label: String
+    let systemImage: String
+    let tint: Color
+}
+
+private struct TrixCallMediaQualityChip: View {
+    let item: TrixCallMediaQualityItem
+
+    var body: some View {
+        Label(item.label, systemImage: item.systemImage)
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .foregroundStyle(item.tint)
+            .background(item.tint.opacity(0.12), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(item.tint.opacity(0.22), lineWidth: 1)
+            }
     }
 }
 

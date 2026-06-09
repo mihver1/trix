@@ -187,6 +187,8 @@ if payload.get("recipient_user_id") != "bob@trix.selfhost.ru":
     raise SystemExit(f"unexpected recipient: {payload}")
 if not any(claim.get("user_id") == "alice@trix.selfhost.ru" and claim.get("kind") == "approved" and claim.get("proof_required") is True for claim in claims):
     raise SystemExit(f"approved claim missing: {payload}")
+if not any(claim.get("user_id") == "alice@trix.selfhost.ru" and claim.get("kind") == "reset" and claim.get("severity") == "high" for claim in claims):
+    raise SystemExit(f"high-severity reset claim missing: {payload}")
 print(payload.get("next_cursor", 0))
 ' <<<"$CLAIMS_RESPONSE"
 )"
@@ -216,5 +218,67 @@ if payload.get("server_state_is_trust_authority") is not False:
 if payload.get("current_device", {}).get("state") != "approved":
     raise SystemExit(f"unexpected approved-device state: {payload}")
 ' <<<"$STATE_RESPONSE"
+
+python3 - "$DB_PATH" "$WORK_DIR/device-passport.stdout" "$WORK_DIR/device-passport.stderr" "$PASSWORD" "$TOKEN" <<'PY'
+import json
+import sqlite3
+import sys
+
+db_path, stdout_path, stderr_path, password, token = sys.argv[1:]
+forbidden = [
+    password,
+    token,
+    "00112233445566778899aabbccddeeff",
+    "ffeeddccbbaa99887766554433221100",
+]
+forbidden = [item for item in forbidden if item]
+forbidden_keys = {
+    "password",
+    "token",
+    "authorization",
+    "fingerprint_hash",
+    "raw_fingerprint",
+    "apns_token",
+    "media_key",
+    "decrypted_body",
+}
+
+connection = sqlite3.connect(db_path)
+rows = connection.execute(
+    "SELECT action, severity, detail_json FROM audit_events ORDER BY id"
+).fetchall()
+actions = {row[0] for row in rows}
+required_actions = {
+    "device.upsert",
+    "operator.reset",
+    "approval.requested",
+    "approval.approved",
+}
+missing = required_actions - actions
+if missing:
+    raise SystemExit(f"audit actions missing: {sorted(missing)}")
+if not any(action == "operator.reset" and severity == "high" for action, severity, _ in rows):
+    raise SystemExit(f"high-severity operator reset audit missing: {rows}")
+
+for action, _severity, detail_json in rows:
+    detail = json.loads(detail_json)
+    lowered_keys = {str(key).lower() for key in detail.keys()}
+    leaked_keys = lowered_keys & forbidden_keys
+    if leaked_keys:
+        raise SystemExit(f"audit detail for {action} contains forbidden keys: {sorted(leaked_keys)}")
+    serialized = json.dumps(detail, sort_keys=True)
+    for secret in forbidden:
+        if secret in serialized:
+            raise SystemExit(f"audit detail for {action} contains forbidden material")
+
+for path in (stdout_path, stderr_path):
+    try:
+        content = open(path, "r", encoding="utf-8", errors="replace").read()
+    except FileNotFoundError:
+        content = ""
+    for secret in forbidden:
+        if secret in content:
+            raise SystemExit(f"service log contains forbidden material: {path}")
+PY
 
 echo "device-passport smoke ok"

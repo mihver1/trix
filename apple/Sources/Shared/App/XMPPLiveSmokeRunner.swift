@@ -43,6 +43,7 @@ enum XMPPLiveSmokeRunner {
         case peerDevices = "peer-devices"
         case secondDeviceFingerprint = "second-device-fingerprint"
         case ownDeviceRevocation = "own-device-revocation"
+        case devicePassport = "device-passport"
         case trustPeer = "trust-peer"
         case profile
         case profileUpdate = "profile-update"
@@ -75,7 +76,7 @@ enum XMPPLiveSmokeRunner {
             case .sessionRestore, .timelineRelaunchSeed, .timelineRelaunchVerify:
                 return true
             case .login, .roster, .roomList, .search, .peerDevices,
-                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .devicePassport, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
                  .groupTimelineRestart, .dmBackfillRepair, .dmE2EE, .dmReaction, .dmReply, .dmEditRetract,
                  .dmAttachment, .deliveryReceipt, .typing, .groupE2EE, .groupAttachment,
@@ -90,7 +91,7 @@ enum XMPPLiveSmokeRunner {
             case .timelineRelaunchVerify:
                 return false
             case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
-                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .devicePassport, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
                  .groupTimelineRestart, .dmBackfillRepair, .timelineRelaunchSeed, .dmE2EE, .dmReaction, .dmReply,
                  .dmEditRetract, .dmAttachment, .deliveryReceipt, .typing, .groupE2EE,
@@ -105,7 +106,7 @@ enum XMPPLiveSmokeRunner {
             case .timelineRestart:
                 return true
             case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
-                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .devicePassport, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline,
                  .groupTimelineRestart, .dmBackfillRepair, .timelineRelaunchSeed,
                  .timelineRelaunchVerify, .dmE2EE, .dmReaction, .dmReply,
@@ -121,7 +122,7 @@ enum XMPPLiveSmokeRunner {
             case .timelineRestart, .groupTimelineRestart, .dmBackfillRepair:
                 return true
             case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
-                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .devicePassport, .trustPeer, .profile,
                  .profileUpdate, .blockedSend, .timeline, .sendTimeline,
                  .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE,
                  .dmReaction, .dmReply, .dmEditRetract, .dmAttachment,
@@ -196,7 +197,7 @@ enum XMPPLiveSmokeRunner {
             case .login, .sessionRestore, .typing:
                 return .memory
             case .roster, .roomList, .search, .peerDevices, .secondDeviceFingerprint,
-                 .ownDeviceRevocation, .trustPeer, .profile, .profileUpdate, .blockedSend,
+                 .ownDeviceRevocation, .devicePassport, .trustPeer, .profile, .profileUpdate, .blockedSend,
                  .timeline, .sendTimeline, .timelineRestart, .groupTimelineRestart,
                  .dmBackfillRepair,
                  .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE, .dmAttachment,
@@ -386,6 +387,13 @@ enum XMPPLiveSmokeRunner {
 
             case .ownDeviceRevocation:
                 try await Self.runOwnDeviceRevocationSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .devicePassport:
+                try await Self.runDevicePassportSmoke(
                     configuration: configuration,
                     service: service,
                     session: session
@@ -1000,6 +1008,186 @@ enum XMPPLiveSmokeRunner {
             try? await secondService.logout(session: secondSession)
         } catch {
             try? await secondService.logout(session: secondSession)
+            throw error
+        }
+    }
+
+    private static func runDevicePassportSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowTrust else {
+            status("device-passport failed allow_trust=false")
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let passportService = HTTPDevicePassportService()
+        let secondProfileName = smokeSecondDeviceProfileName(configuration.secondDeviceProfile)
+        let peerProfileName = smokeSecondDeviceProfileName("device-passport-peer")
+        let thirdProfileName = smokeSecondDeviceProfileName("device-passport-third")
+        let secondService = smokeService(configuration: configuration, profileName: secondProfileName)
+        let peerService = smokeService(configuration: configuration, profileName: peerProfileName)
+        let thirdService = smokeService(configuration: configuration, profileName: thirdProfileName)
+        var secondSession: TrixSession?
+        var peerSession: TrixSession?
+        var thirdSession: TrixSession?
+
+        do {
+            let primaryStatus = try await service.deviceVerificationStatus(session: session)
+            let primaryDevice = try await upsertDevicePassportCurrentDevice(
+                session: session,
+                status: primaryStatus,
+                passportService: passportService
+            )
+            let primarySnapshot = try await passportService.state(session: session, deviceID: primaryDevice.deviceID)
+            guard primarySnapshot.currentDevice?.state == .approved ||
+                    primarySnapshot.currentDevice?.state == .resetRoot else {
+                status("device-passport failed primary_approved=false blocker=operator_reset_required")
+                throw TrixClientError.devicePassportApprovalRequired
+            }
+            status("device-passport primary ok device=\(primaryDevice.deviceID) state=\(primarySnapshot.currentDevice?.state.rawValue ?? "unknown")")
+
+            let loggedInPeerSession = try await peerService.login(
+                userID: peerID,
+                password: peerPassword,
+                serverURL: configuration.serverURL
+            )
+            peerSession = loggedInPeerSession
+            status("device-passport login ok role=prior-trust resource=\(loggedInPeerSession.deviceID)")
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("device-passport login ok role=no-prior-trust resource=\(loggedInThirdSession.deviceID)")
+
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: true,
+                statusPrefix: "device-passport trust owner-prior"
+            )
+            try await ensureTrustedPeer(
+                peerID: session.userID,
+                service: peerService,
+                session: loggedInPeerSession,
+                allowTrust: true,
+                statusPrefix: "device-passport trust prior-owner"
+            )
+            _ = try await service.createEncryptedDirectRoom(inviteeUserID: peerID, name: "", session: session)
+            _ = try await peerService.createEncryptedDirectRoom(inviteeUserID: session.userID, name: "", session: loggedInPeerSession)
+            status("device-passport prior-trust setup ok encrypted_dm=true")
+
+            let loggedInSecondSession = try await secondService.login(
+                userID: configuration.userID,
+                password: configuration.password,
+                serverURL: configuration.serverURL
+            )
+            secondSession = loggedInSecondSession
+            status("device-passport second-login ok profile=\(secondProfileName) resource=\(loggedInSecondSession.deviceID)")
+
+            let secondStatus = try await secondService.deviceVerificationStatus(session: loggedInSecondSession)
+            guard primaryStatus.deviceID != secondStatus.deviceID else {
+                status("device-passport failed distinct_local_devices=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+            let secondDevice = try await upsertDevicePassportCurrentDevice(
+                session: loggedInSecondSession,
+                status: secondStatus,
+                passportService: passportService
+            )
+            var secondSnapshot = try await passportService.state(session: loggedInSecondSession, deviceID: secondDevice.deviceID)
+            if secondSnapshot.needsCurrentDeviceApprovalRequest {
+                _ = try await passportService.createApprovalRequest(deviceID: secondDevice.deviceID, session: loggedInSecondSession)
+                secondSnapshot = try await passportService.state(session: loggedInSecondSession, deviceID: secondDevice.deviceID)
+            }
+            guard secondSnapshot.isCurrentDeviceReadOnly,
+                  let approval = secondSnapshot.currentApprovalRequest else {
+                status("device-passport failed second_pending=false")
+                throw TrixClientError.devicePassportApprovalRequired
+            }
+
+            let publishedOwnDevices = try await service.refreshPeerDeviceIdentities(userID: session.userID, session: session)
+            guard let publishedSecond = publishedOwnDevices.first(where: { $0.deviceID == secondStatus.deviceID }) else {
+                status("device-passport failed second_published=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+            guard !publishedSecond.canSendEncrypted else {
+                status("device-passport failed no_silent_trust=false second=\(secondStatus.deviceID)")
+                throw TrixClientError.omemoDeviceTrustRequired
+            }
+            status("device-passport no-silent-trust ok second=\(secondStatus.deviceID) trusted=false")
+
+            let approvalResult = try await passportService.approveApprovalRequest(
+                id: approval.id,
+                approverDeviceID: primaryStatus.deviceID,
+                session: session
+            )
+            let descriptor = try TrixDevicePassportApprovalDescriptor(claim: approvalResult.claim)
+            let sentDescriptors = try await service.sendDevicePassportApprovalDescriptor(descriptor, session: session)
+            let approvedSecondSnapshot = try await passportService.state(session: loggedInSecondSession, deviceID: secondDevice.deviceID)
+            guard approvedSecondSnapshot.currentDevice?.state == .approved else {
+                status("device-passport failed second_approved=false")
+                throw TrixClientError.devicePassportApprovalRequired
+            }
+            status("device-passport approval ok second=\(secondStatus.deviceID) descriptor_sent=\(sentDescriptors.count)")
+
+            let autoTrustDecision = try await waitForDevicePassportAutoTrust(
+                claim: approvalResult.claim,
+                descriptorService: peerService,
+                deviceService: peerService,
+                session: loggedInPeerSession,
+                statusPrefix: "device-passport prior-trust"
+            )
+            guard autoTrustDecision == .autoTrust else {
+                status("device-passport failed prior_auto_apply=false decision=\(autoTrustDecision)")
+                throw TrixClientError.devicePassportClaimUnverified
+            }
+
+            let thirdViewModel = await MainActor.run { DevicePassportViewModel() }
+            await thirdViewModel.syncDirectoryClaims(
+                session: loggedInThirdSession,
+                passportService: passportService,
+                descriptorService: thirdService,
+                deviceVerificationService: thirdService
+            )
+            let thirdNotices = await MainActor.run { thirdViewModel.notices }
+            let hasPendingNotice = thirdNotices.contains { notice in
+                notice.userID.caseInsensitiveCompare(approvalResult.claim.userID) == .orderedSame &&
+                    notice.severity == .normal
+            }
+            let thirdOwnerDevices = try await thirdService.refreshPeerDeviceIdentities(userID: session.userID, session: loggedInThirdSession)
+            let thirdTrustedSecond = thirdOwnerDevices.contains { $0.deviceID == secondStatus.deviceID && $0.canSendEncrypted }
+            guard hasPendingNotice, !thirdTrustedSecond else {
+                status("device-passport failed no_prior_pending_notice=\(hasPendingNotice) no_prior_trusted_second=\(thirdTrustedSecond)")
+                throw TrixClientError.devicePassportClaimUnverified
+            }
+            status("device-passport no-prior-trust ok pending_notice=true trusted_second=false")
+            status("device-passport ok same_account_approval=true prior_auto_apply=true no_prior_pending=true")
+
+            try? await secondService.logout(session: loggedInSecondSession)
+            try? await peerService.logout(session: loggedInPeerSession)
+            try? await thirdService.logout(session: loggedInThirdSession)
+        } catch {
+            if let secondSession {
+                try? await secondService.logout(session: secondSession)
+            }
+            if let peerSession {
+                try? await peerService.logout(session: peerSession)
+            }
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
             throw error
         }
     }
@@ -2946,7 +3134,9 @@ enum XMPPLiveSmokeRunner {
 
             let holdSeconds = min(max(configuration.callLabHoldSeconds, 1), 60)
             let echoDelaySeconds = min(max(configuration.echoDelaySeconds, 1), 30)
-            status("\(statusPrefix) media config relay_only=true owner_audio_probe=false echo_audio_probe=true hold_seconds=\(Int(holdSeconds)) configured_delay_seconds=\(Int(echoDelaySeconds))")
+            let ownerAudioProfile = TrixCallMediaConfiguration.audioPublishProfile()
+            let ownerVideoProfile = TrixCallMediaConfiguration.videoPublishProfile()
+            status("\(statusPrefix) media config relay_only=true owner_audio_probe=false echo_audio_probe=true owner_audio_profile=\(ownerAudioProfile.rawValue) owner_audio_bitrate=\(ownerAudioProfile.maxBitrate) owner_audio_dtx=\(ownerAudioProfile.dtx) owner_audio_red=\(ownerAudioProfile.red) owner_video_profile=\(ownerVideoProfile.rawValue) owner_video_codec=\(ownerVideoProfile.codecName ?? "sdk-default") owner_video_bitrate=\(ownerVideoProfile.maxBitrate ?? 0) owner_video_fps=\(ownerVideoProfile.maxFps ?? 0) owner_video_capture=\(ownerVideoProfile.captureWidth)x\(ownerVideoProfile.captureHeight) owner_video_simulcast=\(ownerVideoProfile.simulcast) hold_seconds=\(Int(holdSeconds)) configured_delay_seconds=\(Int(echoDelaySeconds))")
 
             await ownerCalls.joinGroupVoiceRoom(roomID: room.id, session: session)
             try requireActiveGroupCall(ownerCalls, roomID: room.id, role: "owner", statusPrefix: statusPrefix)
@@ -2973,7 +3163,7 @@ enum XMPPLiveSmokeRunner {
             )
 
             try await Task.sleep(nanoseconds: UInt64(holdSeconds * 1_000_000_000))
-            status("\(statusPrefix) media hold ok participants=2 relay_only=true delayed_audio_echo=false delayed_video_echo=false sdk_blocker=custom_audio_publish_unvalidated")
+            status("\(statusPrefix) media hold ok participants=2 relay_only=true delayed_audio_echo=false delayed_video_echo=false owner_audio_profile=\(ownerAudioProfile.rawValue) owner_video_profile=\(ownerVideoProfile.rawValue)")
 
             _ = await echoCalls.endCall(roomID: room.id, session: loggedInEchoSession)
             _ = await ownerCalls.endCall(roomID: room.id, session: session)
@@ -3155,6 +3345,46 @@ enum XMPPLiveSmokeRunner {
             allowTrust: allowTrust,
             statusPrefix: "\(statusPrefix) peer-trust"
         )
+    }
+
+    private static func upsertDevicePassportCurrentDevice(
+        session: TrixSession,
+        status: TrixDeviceVerificationStatus,
+        passportService: TrixDevicePassportService
+    ) async throws -> TrixDevicePassportDevice {
+        let request = try TrixDevicePassportCurrentDeviceMetadata.request(session: session, status: status)
+        return try await passportService.upsertCurrentDevice(request, session: session)
+    }
+
+    private static func waitForDevicePassportAutoTrust(
+        claim: TrixDevicePassportDirectoryClaim,
+        descriptorService: TrixDevicePassportDescriptorService,
+        deviceService: TrixDeviceVerificationService,
+        session: TrixSession,
+        statusPrefix: String
+    ) async throws -> TrixDevicePassportClaimDecision {
+        var lastDecision: TrixDevicePassportClaimDecision = .ignored
+        for attempt in 0..<30 {
+            let proof = try await descriptorService.devicePassportClaimProof(for: claim, session: session)
+            let decision = try await TrixDevicePassportClaimProcessor.apply(
+                claim: claim,
+                proof: proof,
+                session: session,
+                deviceService: deviceService
+            )
+            lastDecision = decision
+            if decision == .autoTrust {
+                status("\(statusPrefix) ok auto_apply=true claim=\(claim.id)")
+                return decision
+            }
+
+            if attempt < 29 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        status("\(statusPrefix) failed auto_apply=false decision=\(lastDecision)")
+        return lastDecision
     }
 
     private static func ensureTrustedOwnActiveDevices(

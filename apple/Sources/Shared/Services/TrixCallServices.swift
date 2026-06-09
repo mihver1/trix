@@ -27,6 +27,8 @@ private func sanitizeCallMediaDescription(_ value: String) -> String {
 enum TrixCallMediaConfiguration {
     static let forceRelayEnvironmentKey = "TRIX_CALL_FORCE_RELAY_ONLY"
     static let audioProbeEnvironmentKey = "TRIX_CALL_AUDIO_PROBE"
+    static let audioProfileEnvironmentKey = "TRIX_CALL_AUDIO_PROFILE"
+    static let videoProfileEnvironmentKey = "TRIX_CALL_VIDEO_PROFILE"
 
     static func forceRelayOnly(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         truthyEnvironmentValue(environment[forceRelayEnvironmentKey])
@@ -36,6 +38,40 @@ enum TrixCallMediaConfiguration {
     static func audioProbeEnabled(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         truthyEnvironmentValue(environment[audioProbeEnvironmentKey])
             || truthyInfoDictionaryValue("TrixCallAudioProbe")
+    }
+
+    static func audioPublishProfile(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TrixCallAudioPublishProfile {
+        if let profile = TrixCallAudioPublishProfile(
+            rawValue: environment[audioProfileEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        ) {
+            return profile
+        }
+
+        if let infoDictionaryValue = stringInfoDictionaryValue("TrixCallAudioProfile"),
+           let profile = TrixCallAudioPublishProfile(rawValue: infoDictionaryValue) {
+            return profile
+        }
+
+        return .voice
+    }
+
+    static func videoPublishProfile(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TrixCallVideoPublishProfile {
+        if let profile = TrixCallVideoPublishProfile(
+            rawValue: environment[videoProfileEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        ) {
+            return profile
+        }
+
+        if let infoDictionaryValue = stringInfoDictionaryValue("TrixCallVideoProfile"),
+           let profile = TrixCallVideoPublishProfile(rawValue: infoDictionaryValue) {
+            return profile
+        }
+
+        return .appleH264
     }
 
     private static func truthyEnvironmentValue(_ value: String?) -> Bool {
@@ -59,6 +95,135 @@ enum TrixCallMediaConfiguration {
             return truthyEnvironmentValue(value)
         default:
             return false
+        }
+    }
+
+    private static func stringInfoDictionaryValue(_ key: String) -> String? {
+        switch Bundle.main.object(forInfoDictionaryKey: key) {
+        case let value as String:
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.isEmpty ? nil : normalized
+        default:
+            return nil
+        }
+    }
+}
+
+enum TrixCallAudioPublishProfile: String, Equatable, Sendable {
+    case voice
+    case lossResilient = "loss-resilient"
+    case livekitDefault = "livekit-default"
+
+    var maxBitrate: Int {
+        switch self {
+        case .voice, .lossResilient, .livekitDefault:
+            return 48_000
+        }
+    }
+
+    var dtx: Bool {
+        switch self {
+        case .voice, .lossResilient:
+            return false
+        case .livekitDefault:
+            return true
+        }
+    }
+
+    var red: Bool {
+        switch self {
+        case .voice:
+            return false
+        case .lossResilient, .livekitDefault:
+            return true
+        }
+    }
+}
+
+enum TrixCallVideoPublishProfile: String, Equatable, Sendable {
+    case appleH264 = "apple-h264"
+    case appleH264Low = "apple-h264-low"
+    case appleHEVC = "apple-hevc"
+    case livekitDefault = "livekit-default"
+
+    var codecName: String? {
+        switch self {
+        case .appleH264, .appleH264Low:
+            return "h264"
+        case .appleHEVC:
+            return "h265"
+        case .livekitDefault:
+            return nil
+        }
+    }
+
+    var backupCodecName: String? {
+        switch self {
+        case .appleH264, .appleH264Low:
+            return "vp8"
+        case .appleHEVC:
+            return "h264"
+        case .livekitDefault:
+            return nil
+        }
+    }
+
+    var maxBitrate: Int? {
+        switch self {
+        case .appleH264:
+            return 800_000
+        case .appleH264Low:
+            return 450_000
+        case .appleHEVC:
+            return 600_000
+        case .livekitDefault:
+            return nil
+        }
+    }
+
+    var maxFps: Int? {
+        switch self {
+        case .appleH264, .appleHEVC:
+            return 24
+        case .appleH264Low:
+            return 20
+        case .livekitDefault:
+            return nil
+        }
+    }
+
+    var captureWidth: Int32 {
+        switch self {
+        case .appleH264, .appleHEVC:
+            return 960
+        case .appleH264Low:
+            return 640
+        case .livekitDefault:
+            return 1280
+        }
+    }
+
+    var captureHeight: Int32 {
+        switch self {
+        case .appleH264, .appleHEVC:
+            return 540
+        case .appleH264Low:
+            return 360
+        case .livekitDefault:
+            return 720
+        }
+    }
+
+    var captureFps: Int {
+        maxFps ?? 30
+    }
+
+    var simulcast: Bool {
+        switch self {
+        case .appleH264, .appleH264Low, .appleHEVC:
+            return false
+        case .livekitDefault:
+            return true
         }
     }
 }
@@ -244,15 +409,21 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
     private var sessionsByCallID: [String: LiveKitCallSession] = [:]
     private let forceRelayOnly: Bool
     private let audioProbeEnabled: Bool
+    private let audioPublishProfile: TrixCallAudioPublishProfile
+    private let videoPublishProfile: TrixCallVideoPublishProfile
     private static let debugLoggingConfiguredLock = NSLock()
     nonisolated(unsafe) private static var debugLoggingConfigured = false
 
     init(
         forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly(),
-        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled()
+        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled(),
+        audioPublishProfile: TrixCallAudioPublishProfile = TrixCallMediaConfiguration.audioPublishProfile(),
+        videoPublishProfile: TrixCallVideoPublishProfile = TrixCallMediaConfiguration.videoPublishProfile()
     ) {
         self.forceRelayOnly = forceRelayOnly
         self.audioProbeEnabled = audioProbeEnabled
+        self.audioPublishProfile = audioPublishProfile
+        self.videoPublishProfile = videoPublishProfile
     }
 
     func connect(
@@ -276,8 +447,20 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             callID: authorization.callID,
             audioProbeEnabled: audioProbeEnabled
         )
+        await MainActor.run {
+            TrixCallMediaQualityRegistry.shared.configure(
+                callID: authorization.callID,
+                expectsRemoteAudio: authorization.subscribeAudio,
+                expectsRemoteVideo: authorization.subscribeVideo,
+                relayOnly: forceRelayOnly,
+                audioProbeEnabled: audioProbeEnabled
+            )
+        }
         room.add(delegate: observer)
         let roomOptions = RoomOptions(
+            defaultCameraCaptureOptions: Self.cameraCaptureOptions(for: videoPublishProfile),
+            defaultVideoPublishOptions: Self.videoPublishOptions(for: videoPublishProfile),
+            defaultAudioPublishOptions: Self.audioPublishOptions(for: audioPublishProfile),
             adaptiveStream: authorization.subscribeVideo,
             dynacast: authorization.publishVideo,
             encryptionOptions: EncryptionOptions(keyProvider: keyProvider)
@@ -287,7 +470,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             iceTransportPolicy: forceRelayOnly ? .relay : .all
         )
         trixCallMediaLogger.info(
-            "LiveKit media connect start kind=\(authorization.kind.rawValue, privacy: .public) relay_only=\(self.forceRelayOnly, privacy: .public) publish_audio=\(authorization.publishAudio, privacy: .public) publish_video=\(authorization.publishVideo, privacy: .public) subscribe_audio=\(authorization.subscribeAudio, privacy: .public) subscribe_video=\(authorization.subscribeVideo, privacy: .public) turn_uris=\(authorization.turn.uris.count, privacy: .public)"
+            "LiveKit media connect start kind=\(authorization.kind.rawValue, privacy: .public) relay_only=\(self.forceRelayOnly, privacy: .public) publish_audio=\(authorization.publishAudio, privacy: .public) publish_video=\(authorization.publishVideo, privacy: .public) subscribe_audio=\(authorization.subscribeAudio, privacy: .public) subscribe_video=\(authorization.subscribeVideo, privacy: .public) audio_profile=\(self.audioPublishProfile.rawValue, privacy: .public) audio_bitrate=\(self.audioPublishProfile.maxBitrate, privacy: .public) audio_dtx=\(self.audioPublishProfile.dtx, privacy: .public) audio_red=\(self.audioPublishProfile.red, privacy: .public) video_profile=\(self.videoPublishProfile.rawValue, privacy: .public) video_codec=\(self.videoPublishProfile.codecName ?? "sdk-default", privacy: .public) video_bitrate=\(self.videoPublishProfile.maxBitrate ?? 0, privacy: .public) video_fps=\(self.videoPublishProfile.maxFps ?? 0, privacy: .public) video_capture=\(self.videoPublishProfile.captureWidth, privacy: .public)x\(self.videoPublishProfile.captureHeight, privacy: .public) video_simulcast=\(self.videoPublishProfile.simulcast, privacy: .public) turn_uris=\(authorization.turn.uris.count, privacy: .public)"
         )
 
         let shouldPublishMicrophone = authorization.publishAudio && !audioProbeEnabled
@@ -316,26 +499,42 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         } catch {
             room.remove(delegate: observer)
             await room.disconnect()
+            await MainActor.run {
+                TrixCallMediaQualityRegistry.shared.clear(callID: authorization.callID)
+            }
             Self.logMediaFailure(context: "connect", error: error)
             throw TrixClientError.callMediaUnavailable
         }
 
         if shouldPublishMicrophone {
             do {
-                try await room.localParticipant.setMicrophone(enabled: true)
+                try await room.localParticipant.setMicrophone(
+                    enabled: true,
+                    publishOptions: Self.audioPublishOptions(for: audioPublishProfile)
+                )
             } catch {
                 room.remove(delegate: observer)
                 await room.disconnect()
+                await MainActor.run {
+                    TrixCallMediaQualityRegistry.shared.clear(callID: authorization.callID)
+                }
                 Self.logMediaFailure(context: "microphone", error: error)
                 throw TrixClientError.callMicrophoneUnavailable
             }
         }
         if authorization.publishVideo {
             do {
-                try await room.localParticipant.setCamera(enabled: true)
+                try await room.localParticipant.setCamera(
+                    enabled: true,
+                    captureOptions: Self.cameraCaptureOptions(for: videoPublishProfile),
+                    publishOptions: Self.videoPublishOptions(for: videoPublishProfile)
+                )
             } catch {
                 room.remove(delegate: observer)
                 await room.disconnect()
+                await MainActor.run {
+                    TrixCallMediaQualityRegistry.shared.clear(callID: authorization.callID)
+                }
                 Self.logMediaFailure(context: "camera", error: error)
                 throw TrixClientError.callCameraUnavailable
             }
@@ -370,6 +569,43 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
                 credential: credentials.credential
             )
         ]
+    }
+
+    private static func audioPublishOptions(for profile: TrixCallAudioPublishProfile) -> AudioPublishOptions {
+        AudioPublishOptions(
+            encoding: AudioEncoding(maxBitrate: profile.maxBitrate),
+            dtx: profile.dtx,
+            red: profile.red
+        )
+    }
+
+    private static func cameraCaptureOptions(for profile: TrixCallVideoPublishProfile) -> CameraCaptureOptions {
+        CameraCaptureOptions(
+            dimensions: Dimensions(width: profile.captureWidth, height: profile.captureHeight),
+            fps: profile.captureFps
+        )
+    }
+
+    private static func videoPublishOptions(for profile: TrixCallVideoPublishProfile) -> VideoPublishOptions {
+        guard profile != .livekitDefault else {
+            return VideoPublishOptions()
+        }
+
+        return VideoPublishOptions(
+            encoding: VideoEncoding(maxBitrate: profile.maxBitrate ?? 0, maxFps: profile.maxFps ?? 30),
+            simulcast: profile.simulcast,
+            preferredCodec: videoCodec(named: profile.codecName),
+            preferredBackupCodec: videoCodec(named: profile.backupCodecName),
+            degradationPreference: .maintainFramerate
+        )
+    }
+
+    private static func videoCodec(named name: String?) -> VideoCodec? {
+        guard let name else {
+            return nil
+        }
+
+        return VideoCodec.from(name: name)
     }
 
     private static func configureDebugLoggingIfNeeded(
@@ -417,6 +653,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         await MainActor.run {
             TrixLiveKitVideoTrackRegistry.shared.clear(callID: callID)
             TrixCallAudioLevelRegistry.shared.clear(callID: callID)
+            TrixCallMediaQualityRegistry.shared.clear(callID: callID)
         }
     }
 
@@ -426,7 +663,10 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         }
 
         do {
-            try await session.room.localParticipant.setMicrophone(enabled: enabled)
+            try await session.room.localParticipant.setMicrophone(
+                enabled: enabled,
+                publishOptions: Self.audioPublishOptions(for: audioPublishProfile)
+            )
             if enabled {
                 session.observer.attachExistingLocalAudioTrack(in: session.room)
             } else {
@@ -444,7 +684,11 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         }
 
         do {
-            try await session.room.localParticipant.setCamera(enabled: enabled)
+            try await session.room.localParticipant.setCamera(
+                enabled: enabled,
+                captureOptions: Self.cameraCaptureOptions(for: videoPublishProfile),
+                publishOptions: Self.videoPublishOptions(for: videoPublishProfile)
+            )
             if enabled {
                 session.observer.attachExistingLocalVideoTrack(in: session.room)
             } else {
@@ -554,6 +798,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
+        updateRemoteMediaStatus(from: publication)
         trixCallMediaLogger.info(
             "LiveKit remote track published kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) subscribed=\(publication.isSubscribed, privacy: .public)"
         )
@@ -568,6 +813,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         if publication.track is VideoTrack {
             setRemoteVideoTrack(nil)
         }
+        updateRemoteMediaStatus(kind: publication.kind, status: .waiting)
         trixCallMediaLogger.info(
             "LiveKit remote track unsubscribed kind=\(String(describing: publication.kind), privacy: .public)"
         )
@@ -597,6 +843,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         trackPublication: RemoteTrackPublication,
         didUpdateStreamState streamState: StreamState
     ) {
+        updateRemoteMediaStatus(from: trackPublication)
         trixCallMediaLogger.info(
             "LiveKit remote track stream state=\(String(describing: streamState), privacy: .public) kind=\(String(describing: trackPublication.kind), privacy: .public)"
         )
@@ -620,6 +867,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         if let videoTrack = publication.track as? VideoTrack {
             setRemoteVideoTrack(videoTrack)
         }
+        updateRemoteMediaStatus(from: publication)
 
         trixCallMediaLogger.info(
             "LiveKit remote track \(context, privacy: .public) kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) muted=\(publication.isMuted, privacy: .public) stream=\(String(describing: publication.streamState), privacy: .public) audio_ready=\(audioReady, privacy: .public)"
@@ -678,7 +926,7 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
             return
         }
 
-        let probe = TrixLiveKitAudioProbe()
+        let probe = TrixLiveKitAudioProbe(callID: callID)
         audioTrack.add(audioRenderer: probe)
         audioProbes[key] = probe
         trixCallMediaLogger.info("LiveKit remote audio probe attached")
@@ -690,11 +938,62 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
             "LiveKit media \(context, privacy: .public) failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) description=\(sanitizeCallMediaDescription(nsError.localizedDescription), privacy: .public)"
         )
     }
+
+    private func updateRemoteMediaStatus(from publication: RemoteTrackPublication) {
+        updateRemoteMediaStatus(kind: publication.kind, status: Self.status(from: publication))
+    }
+
+    private func updateRemoteMediaStatus(kind: Track.Kind, status: TrixCallMediaSignalStatus) {
+        let mediaKind: TrixCallMediaKind?
+        switch kind {
+        case .audio:
+            mediaKind = .audio
+        case .video:
+            mediaKind = .video
+        case .none:
+            mediaKind = nil
+        @unknown default:
+            mediaKind = nil
+        }
+
+        guard let mediaKind else {
+            return
+        }
+
+        Task { @MainActor [callID] in
+            TrixCallMediaQualityRegistry.shared.updateRemoteMedia(
+                callID: callID,
+                kind: mediaKind,
+                status: status
+            )
+        }
+    }
+
+    private static func status(from publication: RemoteTrackPublication) -> TrixCallMediaSignalStatus {
+        if publication.isMuted {
+            return .muted
+        }
+
+        if publication.streamState == .paused {
+            return .paused
+        }
+
+        guard publication.isSubscribed, publication.track != nil else {
+            return .waiting
+        }
+
+        return .receiving
+    }
 }
 
 private final class TrixLiveKitAudioProbe: NSObject, AudioRenderer, @unchecked Sendable {
+    private let callID: String
     private let lock = NSLock()
     private var framesSinceLastLog: AVAudioFramePosition = 0
+
+    init(callID: String) {
+        self.callID = callID
+    }
 
     func render(pcmBuffer: AVAudioPCMBuffer) {
         lock.lock()
@@ -706,6 +1005,9 @@ private final class TrixLiveKitAudioProbe: NSObject, AudioRenderer, @unchecked S
         lock.unlock()
 
         if shouldLog {
+            Task { @MainActor [callID] in
+                TrixCallMediaQualityRegistry.shared.noteRemoteAudioFrame(callID: callID)
+            }
             trixCallMediaLogger.info("LiveKit remote audio frames received")
         }
     }
@@ -800,7 +1102,9 @@ private final class TrixLiveKitLocalAudioLevelProbe: NSObject, AudioRenderer, @u
 actor TrixLiveKitMediaCallService: TrixMediaCallService {
     init(
         forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly(),
-        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled()
+        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled(),
+        audioPublishProfile: TrixCallAudioPublishProfile = TrixCallMediaConfiguration.audioPublishProfile(),
+        videoPublishProfile: TrixCallVideoPublishProfile = TrixCallMediaConfiguration.videoPublishProfile()
     ) {}
 
     func connect(

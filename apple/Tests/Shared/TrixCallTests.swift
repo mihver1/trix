@@ -88,6 +88,207 @@ final class TrixCallTests: XCTestCase {
         ]))
     }
 
+    func testCallAudioPublishProfileDefaultsToVoiceProfile() {
+        let profile = TrixCallMediaConfiguration.audioPublishProfile(environment: [:])
+
+        XCTAssertEqual(profile, .voice)
+        XCTAssertEqual(profile.maxBitrate, 48_000)
+        XCTAssertFalse(profile.dtx)
+        XCTAssertFalse(profile.red)
+    }
+
+    func testCallAudioPublishProfileCanSelectLossResilientAndLiveKitDefault() {
+        let lossResilient = TrixCallMediaConfiguration.audioPublishProfile(environment: [
+            TrixCallMediaConfiguration.audioProfileEnvironmentKey: " loss-resilient ",
+        ])
+        XCTAssertEqual(lossResilient, .lossResilient)
+        XCTAssertFalse(lossResilient.dtx)
+        XCTAssertTrue(lossResilient.red)
+
+        let liveKitDefault = TrixCallMediaConfiguration.audioPublishProfile(environment: [
+            TrixCallMediaConfiguration.audioProfileEnvironmentKey: "livekit-default",
+        ])
+        XCTAssertEqual(liveKitDefault, .livekitDefault)
+        XCTAssertTrue(liveKitDefault.dtx)
+        XCTAssertTrue(liveKitDefault.red)
+    }
+
+    func testCallAudioPublishProfileFallsBackToVoiceForUnknownValue() {
+        XCTAssertEqual(
+            TrixCallMediaConfiguration.audioPublishProfile(environment: [
+                TrixCallMediaConfiguration.audioProfileEnvironmentKey: "unknown",
+            ]),
+            .voice
+        )
+    }
+
+    func testCallVideoPublishProfileDefaultsToAppleH264() {
+        let profile = TrixCallMediaConfiguration.videoPublishProfile(environment: [:])
+
+        XCTAssertEqual(profile, .appleH264)
+        XCTAssertEqual(profile.codecName, "h264")
+        XCTAssertEqual(profile.backupCodecName, "vp8")
+        XCTAssertEqual(profile.maxBitrate, 800_000)
+        XCTAssertEqual(profile.maxFps, 24)
+        XCTAssertEqual(profile.captureWidth, 960)
+        XCTAssertEqual(profile.captureHeight, 540)
+        XCTAssertEqual(profile.captureFps, 24)
+        XCTAssertFalse(profile.simulcast)
+    }
+
+    func testCallVideoPublishProfileCanSelectDiagnosticProfiles() {
+        let low = TrixCallMediaConfiguration.videoPublishProfile(environment: [
+            TrixCallMediaConfiguration.videoProfileEnvironmentKey: " apple-h264-low ",
+        ])
+        XCTAssertEqual(low, .appleH264Low)
+        XCTAssertEqual(low.codecName, "h264")
+        XCTAssertEqual(low.maxBitrate, 450_000)
+        XCTAssertEqual(low.maxFps, 20)
+        XCTAssertEqual(low.captureWidth, 640)
+        XCTAssertEqual(low.captureHeight, 360)
+        XCTAssertFalse(low.simulcast)
+
+        let hevc = TrixCallMediaConfiguration.videoPublishProfile(environment: [
+            TrixCallMediaConfiguration.videoProfileEnvironmentKey: "apple-hevc",
+        ])
+        XCTAssertEqual(hevc, .appleHEVC)
+        XCTAssertEqual(hevc.codecName, "h265")
+        XCTAssertEqual(hevc.backupCodecName, "h264")
+        XCTAssertEqual(hevc.maxBitrate, 600_000)
+        XCTAssertEqual(hevc.maxFps, 24)
+        XCTAssertEqual(hevc.captureWidth, 960)
+        XCTAssertEqual(hevc.captureHeight, 540)
+        XCTAssertFalse(hevc.simulcast)
+
+        let liveKitDefault = TrixCallMediaConfiguration.videoPublishProfile(environment: [
+            TrixCallMediaConfiguration.videoProfileEnvironmentKey: "livekit-default",
+        ])
+        XCTAssertEqual(liveKitDefault, .livekitDefault)
+        XCTAssertNil(liveKitDefault.codecName)
+        XCTAssertNil(liveKitDefault.backupCodecName)
+        XCTAssertNil(liveKitDefault.maxBitrate)
+        XCTAssertNil(liveKitDefault.maxFps)
+        XCTAssertEqual(liveKitDefault.captureWidth, 1280)
+        XCTAssertEqual(liveKitDefault.captureHeight, 720)
+        XCTAssertEqual(liveKitDefault.captureFps, 30)
+        XCTAssertTrue(liveKitDefault.simulcast)
+    }
+
+    func testCallVideoPublishProfileFallsBackToAppleH264ForUnknownValue() {
+        XCTAssertEqual(
+            TrixCallMediaConfiguration.videoPublishProfile(environment: [
+                TrixCallMediaConfiguration.videoProfileEnvironmentKey: "unknown",
+            ]),
+            .appleH264
+        )
+    }
+
+    @MainActor
+    func testCallAudioLevelRegistryFlagsLowMicInputAfterGracePeriod() {
+        let registry = TrixCallAudioLevelRegistry.shared
+        let callID = "call-low-mic-\(UUID().uuidString)"
+        let startedAt = Date(timeIntervalSince1970: 100)
+        defer {
+            registry.clear(callID: callID)
+        }
+
+        XCTAssertEqual(
+            registry.localInputSignalState(
+                callID: callID,
+                audioState: .unmuted,
+                startedAt: startedAt,
+                now: Date(timeIntervalSince1970: 103)
+            ),
+            .detecting
+        )
+        XCTAssertEqual(
+            registry.localInputSignalState(
+                callID: callID,
+                audioState: .unmuted,
+                startedAt: startedAt,
+                now: Date(timeIntervalSince1970: 106)
+            ),
+            .low
+        )
+
+        registry.setLevel(0.18, callID: callID, now: Date(timeIntervalSince1970: 107))
+        XCTAssertEqual(
+            registry.localInputSignalState(
+                callID: callID,
+                audioState: .unmuted,
+                startedAt: startedAt,
+                now: Date(timeIntervalSince1970: 108)
+            ),
+            .active
+        )
+
+        registry.setLevel(0, callID: callID, now: Date(timeIntervalSince1970: 109))
+        XCTAssertEqual(
+            registry.localInputSignalState(
+                callID: callID,
+                audioState: .unmuted,
+                startedAt: startedAt,
+                now: Date(timeIntervalSince1970: 112)
+            ),
+            .low
+        )
+        XCTAssertEqual(
+            registry.localInputSignalState(
+                callID: callID,
+                audioState: .muted,
+                startedAt: startedAt,
+                now: Date(timeIntervalSince1970: 112)
+            ),
+            .muted
+        )
+    }
+
+    @MainActor
+    func testCallMediaQualityRegistryTracksRemoteMediaAndRelayStatus() {
+        let registry = TrixCallMediaQualityRegistry.shared
+        let callID = "call-quality-\(UUID().uuidString)"
+        defer {
+            registry.clear(callID: callID)
+        }
+
+        registry.configure(
+            callID: callID,
+            expectsRemoteAudio: true,
+            expectsRemoteVideo: false,
+            relayOnly: true,
+            audioProbeEnabled: true,
+            now: Date(timeIntervalSince1970: 100)
+        )
+        var snapshot = registry.snapshot(for: callID)
+        XCTAssertTrue(snapshot.relayOnly)
+        XCTAssertTrue(snapshot.audioProbeEnabled)
+        XCTAssertEqual(snapshot.remoteAudioStatus, .waiting)
+        XCTAssertEqual(snapshot.remoteVideoStatus, .unavailable)
+
+        registry.updateRemoteMedia(
+            callID: callID,
+            kind: .audio,
+            status: .receiving,
+            now: Date(timeIntervalSince1970: 101)
+        )
+        snapshot = registry.snapshot(for: callID)
+        XCTAssertEqual(snapshot.remoteAudioStatus, .receiving)
+        XCTAssertNil(snapshot.lastRemoteAudioFrameAt)
+
+        registry.noteRemoteAudioFrame(callID: callID, now: Date(timeIntervalSince1970: 102))
+        snapshot = registry.snapshot(for: callID)
+        XCTAssertEqual(snapshot.remoteAudioStatus, .receiving)
+        XCTAssertEqual(snapshot.lastRemoteAudioFrameAt, Date(timeIntervalSince1970: 102))
+
+        registry.updateRemoteMedia(
+            callID: callID,
+            kind: .audio,
+            status: .paused,
+            now: Date(timeIntervalSince1970: 103)
+        )
+        XCTAssertEqual(registry.snapshot(for: callID).remoteAudioStatus, .paused)
+    }
+
     func testCallControlFailuresExposeLayerSpecificMessages() {
         let removedGenericMessage = "Encrypted calls are not available yet."
 

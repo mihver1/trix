@@ -132,7 +132,7 @@ wakes while visible notification text remains local and generic after sync.
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
 `second-device-fingerprint`, `own-device-revocation`, `trust-peer`, `profile`,
-`profile-update`, `timeline`, `send-timeline`, `timeline-restart`,
+`device-passport`, `profile-update`, `timeline`, `send-timeline`, `timeline-restart`,
 `group-timeline-restart`, `dm-backfill-repair`,
 `timeline-relaunch-seed`, `timeline-relaunch-verify`, `dm-e2ee`,
 `dm-reaction`, `dm-reply`, `dm-edit-retract`, `dm-attachment`,
@@ -197,6 +197,17 @@ the second account device through the reviewed MartinOMEMO revocation API, and
 verifies the target device is removed or marked inactive in refreshed published
 device state. It accepts optional
 `TRIX_XMPP_LIVE_SMOKE_REVOKE_DEVICE_ID` to target a specific own device ID. The
+`device-passport` mode requires `TRIX_XMPP_LIVE_SMOKE_PEER_ID`,
+`TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD`, `TRIX_XMPP_LIVE_SMOKE_THIRD_ID`,
+`TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD`, and
+`TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`; it expects the primary signed-in device to
+already be Device Passport approved or reset-rooted. The mode logs in an
+isolated second same-account profile, fails if that device is silently trusted,
+approves it through Device Passport, sends the OMEMO-encrypted approval
+descriptor from the primary device, requires a prior-trust account to auto-apply
+the claim, and requires a no-prior-trust account to keep only a pending notice.
+It does not call the operator reset route; reset remains server/operator-only and
+is covered by the server smoke below. The
 `session-restore` mode saves the
 fresh session into a smoke-only Keychain item, loads it through a new service
 instance, restores the XMPP connection, logs out, clears that smoke item, and
@@ -591,6 +602,15 @@ The target protocol-neutral boundary is:
   media E2EE required. For signed-device TURN smoke only, launching the app with
   `TRIX_CALL_FORCE_RELAY_ONLY=1` makes the LiveKit adapter request relay-only
   ICE transport policy; normal product launches keep the default ICE policy.
+  The audio publish path uses an explicit Opus voice profile by default
+  (`TRIX_CALL_AUDIO_PROFILE=voice`, 48 kbps, no DTX, no RED). Use
+  `loss-resilient` to keep RED enabled without DTX, or `livekit-default` to
+  compare against LiveKit Swift's default DTX+RED behavior during diagnostics.
+  The video publish path defaults to an Apple hardware-friendly H.264 profile
+  (`TRIX_CALL_VIDEO_PROFILE=apple-h264`, 960x540 capture, 24 fps, 800 kbps, no
+  simulcast) with VP8 as the LiveKit backup codec. Use `apple-h264-low` for
+  constrained-link diagnostics, `apple-hevc` only as an explicit HEVC/H.265
+  interop check, or `livekit-default` to compare against LiveKit Swift defaults.
   The macOS app entitlement set includes outgoing and incoming network access,
   camera, and microphone because signed macOS WebRTC media sockets need the
   sandbox network capability in both directions.

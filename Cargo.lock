@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "trix-admin-api"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "axum",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "trix-call-control"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "axum",
@@ -1691,7 +1691,7 @@ dependencies = [
 
 [[package]]
 name = "trix-device-passport"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "axum",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "trix-push"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "http",
@@ -1724,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "trix-push-gateway"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "axum",

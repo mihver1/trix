@@ -113,6 +113,11 @@ For local code changes, run the self-contained dry-run smoke from the repo root:
 server/xmpp/scripts/device-passport-smoke.sh
 ```
 
+The smoke covers current-device registration, operator reset, same-account
+approval, directory-claim visibility, notice dismissal, `server_state_is_trust_authority=false`,
+and SQLite audit rows plus service stdout/stderr scrubbing for generated
+passwords, operator tokens, and fingerprint hashes.
+
 Server-synced passport state is intentionally not enough to expand OMEMO
 fanout. Directory claims are marked `proof_required=true`; Apple clients may
 auto-trust a new device only when an OMEMO-encrypted Device Passport approval
@@ -651,6 +656,10 @@ internet. Signed macOS APNs smoke passed on 2026-05-20 with provider delivery
 success for a generic sync wake and QA-visible notification text limited to the
 generic Trix alert, with no plaintext message, filename, media-key, or
 decrypted-content payload fields.
+For the testing phase, `mod_push_keepalive.resume_timeout` is set to
+`720 hours` (30 days), extending only the disconnected push-enabled stream
+resumption window; APNs provider authentication tokens still use their short
+provider-side lifetime.
 
 Mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values for
 `trix-push-gateway`, set fresh `TRIX_PUSH_GATEWAY_TOKEN` and

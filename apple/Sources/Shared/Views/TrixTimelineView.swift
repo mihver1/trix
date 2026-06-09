@@ -520,7 +520,7 @@ struct TrixTimelineView: View {
         HStack(spacing: 10) {
             TrixBannerView(
                 text: encryptionRequiredMessage,
-                systemImage: "lock.slash.fill",
+                systemImage: encryptionRequiredSystemImage,
                 tint: .orange
             )
             .layoutPriority(1)
@@ -538,7 +538,15 @@ struct TrixTimelineView: View {
         .padding(.bottom, 8)
     }
 
+    private var encryptionRequiredSystemImage: String {
+        devicePassportBlockMessage == nil ? "lock.slash.fill" : "exclamationmark.shield"
+    }
+
     private var encryptionRequiredMessage: String {
+        if let devicePassportBlockMessage {
+            return devicePassportBlockMessage
+        }
+
         if room.kind == .group,
            let reason = currentAttachmentSendAvailability?.blockReason {
             switch reason {
@@ -610,6 +618,7 @@ struct TrixTimelineView: View {
             EmptyView()
             #else
             TrixGroupVoiceRoomBar(
+                state: callState,
                 snapshot: callViewModel.groupVoiceRoom(roomID: room.id),
                 participantTitle: callParticipantTitle,
                 isJoined: callState.kind == .groupVoice && callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil,
@@ -2318,6 +2327,8 @@ private struct TrixDirectCallBar: View {
                 .help("End")
                 .accessibilityLabel("End video call")
             }
+
+            TrixCallMediaQualityStrip(state: state, tint: .green)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -2342,8 +2353,8 @@ private struct TrixDirectCallBar: View {
             }
             .buttonStyle(.bordered)
             .disabled(isWorking || state.localAudioState == .unavailable)
-            .help(state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
-            .accessibilityLabel(state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+            .help(microphoneHelp)
+            .accessibilityLabel(microphoneHelp)
 
             Button {
                 setCameraEnabled(state.localCameraState != .on)
@@ -2353,13 +2364,36 @@ private struct TrixDirectCallBar: View {
             }
             .buttonStyle(.bordered)
             .disabled(isWorking || state.localCameraState == .unavailable)
-            .help(state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
-            .accessibilityLabel(state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
+            .help(cameraHelp)
+            .accessibilityLabel(cameraHelp)
+        }
+    }
+
+    private var microphoneHelp: String {
+        switch state.localAudioState {
+        case .unavailable:
+            return "Microphone unavailable or permission denied"
+        case .muted:
+            return "Unmute microphone"
+        case .unmuted:
+            return "Mute microphone"
+        }
+    }
+
+    private var cameraHelp: String {
+        switch state.localCameraState {
+        case .unavailable:
+            return "Camera unavailable or permission denied"
+        case .off:
+            return "Turn camera on"
+        case .on:
+            return "Turn camera off"
         }
     }
 }
 
 private struct TrixGroupVoiceRoomBar: View {
+    let state: TrixCallLifecycleState
     let snapshot: TrixGroupVoiceRoomSnapshot
     let participantTitle: (String) -> String
     let isJoined: Bool
@@ -2403,6 +2437,10 @@ private struct TrixGroupVoiceRoomBar: View {
                         }
                     }
                 }
+            }
+
+            if isJoined {
+                TrixCallMediaQualityStrip(state: state, tint: TrixDesign.groupAccent)
             }
         }
         .padding(.horizontal, 12)

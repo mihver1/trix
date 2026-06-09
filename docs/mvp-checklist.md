@@ -114,8 +114,11 @@ copying old implementation details.
       decrypted-content fields. On 2026-06-01 the live VPS enabled
       `mod_push_keepalive` plus explicit stream-management ACK/resume timeouts
       so disconnected push-enabled sessions are kept eligible for XEP-0357
-      wakeups; post-restart component publish smoke updated the gateway store
-      with APNs delivery success and no failures. After real message sends still
+      wakeups. For the testing phase, `mod_push_keepalive.resume_timeout` is
+      `720 hours` (30 days) so a signed device can remain push-resumable across
+      multi-day feature gaps; post-restart component publish smoke updated the
+      gateway store with APNs delivery success and no failures. After real
+      message sends still
       produced no gateway publish attempts, live ejabberd was switched to
       `mod_push.notify_on: all` so encrypted or metadata-only XMPP stanzas can
       wake registered clients. The gateway now sends those XMPP component
@@ -553,10 +556,15 @@ copying old implementation details.
       on signed profiles, a third account with prior trust auto-applying the
       OMEMO-backed claim, a no-prior-trust account showing only a pending
       notice, and an operator reset path with strong notice plus scrubbed logs.
-      Local deploy readiness is covered by
+      The Apple `device-passport` live-smoke mode is wired for the same-account
+      approval, no-silent-trust, prior-trust auto-apply, and no-prior pending
+      notice checks, but still requires disposable live credentials and a signed
+      app run before this item can close. Local deploy readiness is covered by
       `server/xmpp/scripts/device-passport-smoke.sh`, `cargo test -p
-      trix-device-passport`, and the Apple Device Passport tests; the remaining
-      item is signed live-device evidence.
+      trix-device-passport`, and the Apple Device Passport/verification tests;
+      the server smoke also checks high-severity operator reset notice state plus
+      scrubbed SQLite audit rows and service logs. The remaining item is signed
+      live-device evidence.
 
 ## Current First-Slice Status
 

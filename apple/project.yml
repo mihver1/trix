@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     CURRENT_PROJECT_VERSION: 1
-    MARKETING_VERSION: 0.2.11
+    MARKETING_VERSION: 0.2.12
 
 packages:
   Martin:
@@ -150,3 +150,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Trix.app/Contents/MacOS/Trix
         BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  TrixMatrixMac:
+    build:
+      targets:
+        TrixMatrixMac: all
+        TrixMatrixMacTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TrixMatrixMacTests
+    archive:
+      config: Release

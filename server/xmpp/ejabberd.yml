@@ -168,7 +168,7 @@ modules:
     include_sender: false
     notify_on: all
   mod_push_keepalive:
-    resume_timeout: 72 hours
+    resume_timeout: 720 hours
     wake_on_start: false
     wake_on_timeout: true
   mod_roster:
