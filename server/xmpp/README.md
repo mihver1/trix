@@ -651,6 +651,10 @@ internet. Signed macOS APNs smoke passed on 2026-05-20 with provider delivery
 success for a generic sync wake and QA-visible notification text limited to the
 generic Trix alert, with no plaintext message, filename, media-key, or
 decrypted-content payload fields.
+For the testing phase, `mod_push_keepalive.resume_timeout` is set to
+`720 hours` (30 days), extending only the disconnected push-enabled stream
+resumption window; APNs provider authentication tokens still use their short
+provider-side lifetime.
 
 Mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values for
 `trix-push-gateway`, set fresh `TRIX_PUSH_GATEWAY_TOKEN` and

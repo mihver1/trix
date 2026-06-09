@@ -520,7 +520,7 @@ struct TrixTimelineView: View {
         HStack(spacing: 10) {
             TrixBannerView(
                 text: encryptionRequiredMessage,
-                systemImage: "lock.slash.fill",
+                systemImage: encryptionRequiredSystemImage,
                 tint: .orange
             )
             .layoutPriority(1)
@@ -538,7 +538,15 @@ struct TrixTimelineView: View {
         .padding(.bottom, 8)
     }
 
+    private var encryptionRequiredSystemImage: String {
+        devicePassportBlockMessage == nil ? "lock.slash.fill" : "exclamationmark.shield"
+    }
+
     private var encryptionRequiredMessage: String {
+        if let devicePassportBlockMessage {
+            return devicePassportBlockMessage
+        }
+
         if room.kind == .group,
            let reason = currentAttachmentSendAvailability?.blockReason {
             switch reason {

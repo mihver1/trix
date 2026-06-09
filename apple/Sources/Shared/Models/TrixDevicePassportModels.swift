@@ -173,6 +173,18 @@ struct TrixDevicePassportSnapshot: Codable, Equatable, Sendable {
         currentDevice?.isCurrentDeviceReadOnly == true
     }
 
+    var needsCurrentDeviceApprovalRequest: Bool {
+        guard currentApprovalRequest == nil else {
+            return false
+        }
+        switch currentDevice?.state {
+        case .pending, .approvalRequested:
+            return true
+        case .approved, .revoked, .resetRoot, nil:
+            return false
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case userID = "user_id"
         case generation

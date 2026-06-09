@@ -113,4 +113,43 @@ final class TrixTimelineBackfillTests: XCTestCase {
         )
         XCTAssertEqual(decoded, request)
     }
+
+    func testDMBackfillArchiveScanPolicyDoesNotStopAtRecentPayloadTarget() {
+        let policy = XMPPMartinService.dmTimelineBackfillArchiveScanPolicy()
+
+        XCTAssertGreaterThan(policy.maxPages, 50)
+        XCTAssertNil(policy.targetPayloadEvents)
+    }
+
+    func testOwnUndecodableOMEMOMessageRequestsBackfillEvenWhenLocalKeyExists() {
+        XCTAssertTrue(
+            XMPPMartinService.shouldRequestTimelineBackfill(
+                hasOMEMOPayload: true,
+                hasLocalRecipientKey: true,
+                decodedPayloadWasIgnored: true,
+                senderJID: "ME@trix.selfhost.ru",
+                accountJID: "me@trix.selfhost.ru"
+            )
+        )
+
+        XCTAssertFalse(
+            XMPPMartinService.shouldRequestTimelineBackfill(
+                hasOMEMOPayload: true,
+                hasLocalRecipientKey: true,
+                decodedPayloadWasIgnored: true,
+                senderJID: "peer@trix.selfhost.ru",
+                accountJID: "me@trix.selfhost.ru"
+            )
+        )
+
+        XCTAssertFalse(
+            XMPPMartinService.shouldRequestTimelineBackfill(
+                hasOMEMOPayload: false,
+                hasLocalRecipientKey: false,
+                decodedPayloadWasIgnored: true,
+                senderJID: "me@trix.selfhost.ru",
+                accountJID: "me@trix.selfhost.ru"
+            )
+        )
+    }
 }
