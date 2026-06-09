@@ -36,20 +36,24 @@ private struct TrixMacWorkspaceView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // The split view must stay the window's root content: wrapping it in a
+        // VStack with a dynamic sibling shifts it down while its safe-area math
+        // still assumes the window top, pushing the sidebar under the titlebar
+        // and clipping the composer. The call bar is delivered via a safe-area
+        // inset instead, which keeps the split view geometry stable.
+        NavigationSplitView {
+            TrixMacRoomListView(model: model)
+                .navigationTitle("Trix")
+                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
+        } content: {
+            TrixMacTimelineColumn(model: model)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 640)
+        } detail: {
+            TrixMacRoomContextView(model: model, room: model.selectedRoom)
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             TrixActiveCallSurfaceHost(model: model, placement: .workspace)
-
-            NavigationSplitView {
-                TrixMacRoomListView(model: model)
-                    .navigationTitle("Trix")
-                    .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
-            } content: {
-                TrixMacTimelineColumn(model: model)
-                    .navigationSplitViewColumnWidth(min: 480, ideal: 640)
-            } detail: {
-                TrixMacRoomContextView(model: model, room: model.selectedRoom)
-                    .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
-            }
         }
         .toolbar {
             ToolbarItemGroup {

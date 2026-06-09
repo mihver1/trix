@@ -353,7 +353,9 @@ struct TrixTimelineView: View {
             await loadDirectUserActivity()
             await loadPeerDevices(refresh: false)
             await model.loadAttachmentSendAvailability(roomID: room.id)
-            await model.loadCallState(for: room)
+            // Opening a room is not a user-initiated call action: a transient
+            // failure here must not raise the workspace call error banner.
+            await model.loadCallState(for: room, reportsErrors: false)
         }
         .task(id: "typing-\(room.id)") {
             while !Task.isCancelled {
@@ -363,7 +365,9 @@ struct TrixTimelineView: View {
         }
         .task(id: "calls-\(room.id)") {
             while !Task.isCancelled {
-                await model.loadCallState(for: room)
+                // Background polling: transient network failures must not
+                // flash the workspace call error banner.
+                await model.loadCallState(for: room, reportsErrors: false)
                 try? await Task.sleep(for: .seconds(4))
             }
         }

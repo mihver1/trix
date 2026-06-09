@@ -1332,13 +1332,17 @@ final class TrixAppModel: ObservableObject {
         )
     }
 
-    func loadCallState(for room: TrixRoomSummary) async {
+    func loadCallState(for room: TrixRoomSummary, reportsErrors: Bool = true) async {
         guard let session else {
             callViewModel.clear()
             return
         }
 
-        await callViewModel.loadRoomCallState(room: room, session: session)
+        await callViewModel.loadRoomCallState(
+            room: room,
+            session: session,
+            reportsErrors: reportsErrors
+        )
     }
 
     func refreshCallStateForRooms(reportingErrors: Bool = false) async {

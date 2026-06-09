@@ -78,27 +78,28 @@ private struct TrixWorkspaceView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TrixActiveCallSurfaceHost(model: model, placement: .workspace)
-
-            TabView {
-                NavigationStack {
-                    TrixRoomListView(model: model, mode: .phoneInbox)
-                        .navigationTitle("Chats")
-                        .trixInlineNavigationTitle()
-                }
-                .tabItem {
-                    Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
-                }
-
-                NavigationStack {
-                    TrixSettingsView(model: model)
-                        .navigationTitle("Settings")
-                }
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape.fill")
-                }
+        // Keep TabView the root view; delivering the call bar through a
+        // safe-area inset avoids shifting the container when the bar appears.
+        TabView {
+            NavigationStack {
+                TrixRoomListView(model: model, mode: .phoneInbox)
+                    .navigationTitle("Chats")
+                    .trixInlineNavigationTitle()
             }
+            .tabItem {
+                Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
+            }
+
+            NavigationStack {
+                TrixSettingsView(model: model)
+                    .navigationTitle("Settings")
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            TrixActiveCallSurfaceHost(model: model, placement: .workspace)
         }
         .tint(TrixDesign.accent)
         .task(id: scenePhase) {
@@ -123,15 +124,16 @@ private struct TrixWorkspaceView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Keep NavigationSplitView the root view; delivering the call bar
+        // through a safe-area inset keeps its window-relative geometry stable.
+        NavigationSplitView {
+            TrixRoomListView(model: model, mode: .sidebar)
+                .navigationTitle("Trix")
+        } detail: {
+            TrixWorkspaceDetailView(model: model)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             TrixActiveCallSurfaceHost(model: model, placement: .workspace)
-
-            NavigationSplitView {
-                TrixRoomListView(model: model, mode: .sidebar)
-                    .navigationTitle("Trix")
-            } detail: {
-                TrixWorkspaceDetailView(model: model)
-            }
         }
         .tint(TrixDesign.accent)
         .task(id: scenePhase) {
