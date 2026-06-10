@@ -1043,24 +1043,34 @@ struct TrixRoomMember: Identifiable, Equatable, Sendable {
 }
 
 enum TrixDeliveryState: String, Codable, Equatable, Sendable {
+    case pending
     case sent
     case delivered
+    case failed
 
     var label: String {
         switch self {
+        case .pending:
+            return "Sending…"
         case .sent:
             return "Sent"
         case .delivered:
             return "Delivered"
+        case .failed:
+            return "Not sent"
         }
     }
 
     var systemImage: String {
         switch self {
+        case .pending:
+            return "clock"
         case .sent:
             return "checkmark"
         case .delivered:
             return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.circle.fill"
         }
     }
 }
@@ -1292,15 +1302,24 @@ struct TrixTextMessageSendRequest: Codable, Equatable, Sendable {
     let text: String
     let roomID: String
     let metadata: TrixTextMessageSendMetadata
+    /// Stable stanza/origin id for this logical message. Outbox retries reuse
+    /// the queued message id so a resend after an ambiguous failure (stanza
+    /// accepted by the server, error observed by the client) stays dedupable
+    /// by XEP-0359-aware recipients instead of arriving twice.
+    let preferredMessageID: String?
 
     init(
         text: String,
         roomID: String,
-        metadata: TrixTextMessageSendMetadata = .empty
+        metadata: TrixTextMessageSendMetadata = .empty,
+        preferredMessageID: String? = nil
     ) {
         self.text = text
         self.roomID = roomID
         self.metadata = metadata
+
+        let trimmedMessageID = preferredMessageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.preferredMessageID = (trimmedMessageID?.isEmpty == false) ? trimmedMessageID : nil
     }
 }
 
@@ -1723,6 +1742,14 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
 
         if lhs == .sent || rhs == .sent {
             return .sent
+        }
+
+        if lhs == .failed || rhs == .failed {
+            return .failed
+        }
+
+        if lhs == .pending || rhs == .pending {
+            return .pending
         }
 
         return nil

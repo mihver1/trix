@@ -1,5 +1,7 @@
+import Combine
 import Foundation
 import Network
+import UserNotifications
 
 struct TrixStartupStatus: Equatable {
     let step: String
@@ -68,6 +70,8 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var roomNotificationProfiles: [String: TrixRoomNotificationProfile] = [:]
     @Published private(set) var isUpdatingRoomNotificationProfile = false
     @Published private(set) var roomNotificationProfileMessage: String?
+    @Published private(set) var draftsByRoomID: [String: TrixComposerDraft] = [:]
+    @Published var isQuickSwitcherPresented = false
     @Published private var selectedRoomSnapshot: TrixRoomSummary?
 
     let roomListViewModel: RoomListViewModel
@@ -84,6 +88,11 @@ final class TrixAppModel: ObservableObject {
     private let mediaCacheStore: TrixMediaCacheStore
     private let mediaCacheSettingsStore: TrixMediaCacheSettingsStore
     private let roomNotificationProfileStore: TrixRoomNotificationProfileStore
+    private let roomListPreferenceStore: TrixRoomListPreferenceStore
+    private let draftStore: TrixDraftStore
+    private let outboxStore: TrixOutboxStore
+    private let outboxDrainGate = TrixAsyncOperationGate<String, Bool>()
+    private var draftsPersistTask: Task<Void, Never>?
     private let trixService: TrixService
     private let networkMonitor = NWPathMonitor()
     private let networkMonitorQueue = DispatchQueue(label: "TrixNetworkMonitor")
@@ -96,6 +105,8 @@ final class TrixAppModel: ObservableObject {
     private var networkWasSatisfied: Bool?
     private var networkRecoveryTask: Task<Void, Never>?
     private var remoteNotificationRoomRefreshTask: Task<Void, Never>?
+    private var applicationBadgeRefreshCancellable: AnyCancellable?
+    private var lastAppliedApplicationBadgeCount: Int?
     private let foregroundRefreshInterval: Duration = .seconds(10)
 
     init(
@@ -107,6 +118,9 @@ final class TrixAppModel: ObservableObject {
         mediaCacheStore: TrixMediaCacheStore = TrixMediaCacheStore(),
         mediaCacheSettingsStore: TrixMediaCacheSettingsStore = UserDefaultsTrixMediaCacheSettingsStore(),
         roomNotificationProfileStore: TrixRoomNotificationProfileStore = TrixRoomNotificationProfileStore(),
+        roomListPreferenceStore: TrixRoomListPreferenceStore = TrixRoomListPreferenceStore(),
+        draftStore: TrixDraftStore = TrixDraftStore.makeDefault(),
+        outboxStore: TrixOutboxStore = TrixOutboxStore.makeDefault(),
         trixService: TrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
@@ -117,6 +131,9 @@ final class TrixAppModel: ObservableObject {
         self.mediaCacheStore = mediaCacheStore
         self.mediaCacheSettingsStore = mediaCacheSettingsStore
         self.roomNotificationProfileStore = roomNotificationProfileStore
+        self.roomListPreferenceStore = roomListPreferenceStore
+        self.draftStore = draftStore
+        self.outboxStore = outboxStore
         self.trixService = trixService
         self.mediaCachePolicy = mediaCacheSettingsStore.loadPolicy()
         self.roomListViewModel = RoomListViewModel()
@@ -124,6 +141,7 @@ final class TrixAppModel: ObservableObject {
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
         self.devicePassportViewModel = DevicePassportViewModel()
         self.callViewModel = TrixCallViewModel(callDescriptorService: trixService)
+        startApplicationBadgeUpdates()
         startNetworkMonitor()
     }
 
@@ -174,6 +192,8 @@ final class TrixAppModel: ObservableObject {
             loadStickerLibrary(for: restoredSession.userID)
             refreshLocalMediaState(for: restoredSession.userID)
             loadRoomNotificationProfiles(for: restoredSession.userID)
+            loadRoomListPreferences(for: restoredSession.userID)
+            loadComposerDrafts(for: restoredSession.userID)
             await loadCachedRoomsForCurrentSession()
             isStarting = false
 
@@ -247,6 +267,7 @@ final class TrixAppModel: ObservableObject {
             }
         }
 
+        await drainOutbox()
         await refreshForeground(
             markSelectedRoomRead: false,
             reloadSelectedTimeline: applicationIsActive,
@@ -266,6 +287,8 @@ final class TrixAppModel: ObservableObject {
         loadStickerLibrary(for: restoredSession.userID)
         refreshLocalMediaState(for: restoredSession.userID)
         loadRoomNotificationProfiles(for: restoredSession.userID)
+        loadRoomListPreferences(for: restoredSession.userID)
+        loadComposerDrafts(for: restoredSession.userID)
         await loadCachedRoomsForCurrentSession()
 
         isStarting = false
@@ -326,7 +349,10 @@ final class TrixAppModel: ObservableObject {
             loadStickerLibrary(for: authenticatedSession.userID)
             refreshLocalMediaState(for: authenticatedSession.userID)
             loadRoomNotificationProfiles(for: authenticatedSession.userID)
+            loadRoomListPreferences(for: authenticatedSession.userID)
+            loadComposerDrafts(for: authenticatedSession.userID)
             await reloadRooms()
+            await drainOutbox()
             await reloadDeviceVerificationStatus()
             await syncDevicePassportState()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
@@ -384,6 +410,8 @@ final class TrixAppModel: ObservableObject {
             loadStickerLibrary(for: authenticatedSession.userID)
             refreshLocalMediaState(for: authenticatedSession.userID)
             loadRoomNotificationProfiles(for: authenticatedSession.userID)
+            loadRoomListPreferences(for: authenticatedSession.userID)
+            loadComposerDrafts(for: authenticatedSession.userID)
 
             if let displayName = registration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
                !displayName.isEmpty {
@@ -397,6 +425,7 @@ final class TrixAppModel: ObservableObject {
             }
 
             await reloadRooms()
+            await drainOutbox()
             await reloadDeviceVerificationStatus()
             await syncDevicePassportState()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
@@ -469,6 +498,12 @@ final class TrixAppModel: ObservableObject {
             await unregisterVoIPPushRegistrationIfPossible(session: session)
             await unregisterAPNsRegistrationIfPossible(session: session)
 
+            // Queued unsent messages must not survive an explicit sign-out:
+            // they would auto-send on the next login of this account with no
+            // way to cancel them. Drafts and room-list preferences stay, in
+            // line with the timeline-cache retention policy.
+            try? outboxStore.clear(accountJID: session.userID)
+
             do {
                 try await trixService.logout(session: session)
             } catch {
@@ -522,6 +557,10 @@ final class TrixAppModel: ObservableObject {
     func setApplicationIsActive(_ isActive: Bool) async {
         applicationIsActive = isActive
         TrixAPNsCoordinator.shared.setApplicationIsActive(isActive)
+
+        if !isActive {
+            flushPendingDraftSaves()
+        }
 
         guard let session else {
             return
@@ -594,6 +633,9 @@ final class TrixAppModel: ObservableObject {
         }
 
         let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
+        // TrixAPNsCoordinator applies this badge; remember it so the next
+        // in-app unread change re-asserts the locally computed value.
+        lastAppliedApplicationBadgeCount = badgeCount
         let shouldScheduleLocalNotification = applicationIsActive ||
             !payload.presentsRemoteNotification
         let localNotification = shouldScheduleLocalNotification
@@ -653,6 +695,7 @@ final class TrixAppModel: ObservableObject {
 
     private func finishSessionRestoreInBackground() async {
         await reloadRooms()
+        await drainOutbox()
         await reloadDeviceVerificationStatus()
         await syncDevicePassportState()
         if let session {
@@ -742,6 +785,12 @@ final class TrixAppModel: ObservableObject {
 
     func selectRoom(_ room: TrixRoomSummary) async {
         prepareRoomSelection(room)
+        // Fetch the read marker concurrently with the timeline load so room
+        // opening never blocks on it; the unread anchor falls back to the
+        // room's unreadCount when the marker loses the race.
+        Task { [weak self] in
+            await self?.prepareUnreadAnchor(for: room)
+        }
         await loadTimeline(roomID: room.id)
         roomListViewModel.markRead(roomID: room.id)
         refreshSelectedRoomSnapshot()
@@ -757,7 +806,79 @@ final class TrixAppModel: ObservableObject {
     func prepareRoomSelection(_ room: TrixRoomSummary) {
         selectedRoomSnapshot = room
         timelineViewModel.prepareForRoomSwitch(roomID: room.id)
+        // The anchor needs the own user id to skip own messages; without a
+        // session there is nothing meaningful to anchor, so skip it instead
+        // of smuggling an empty id downstream.
+        if let userID = session?.userID {
+            timelineViewModel.prepareUnreadAnchor(
+                roomID: room.id,
+                unreadCount: room.unreadCount,
+                currentUserID: userID
+            )
+        }
         selectedRoomID = room.id
+    }
+
+    // MARK: - Keyboard navigation (macOS quick switcher and shortcuts)
+
+    func presentQuickSwitcher() {
+        guard isAuthenticated else {
+            return
+        }
+
+        isQuickSwitcherPresented = true
+    }
+
+    /// Opens a room from keyboard-driven navigation (quick switcher,
+    /// "Next Unread Room"), mirroring the sidebar's selection path.
+    func openRoomFromKeyboardNavigation(_ room: TrixRoomSummary) {
+        prepareRoomSelection(room)
+        Task { [weak self] in
+            await self?.selectRoom(room)
+        }
+    }
+
+    /// Cycles through rooms with unread activity (server unread counts or a
+    /// manual unread mark), walking the pinned-first display order starting
+    /// after the currently selected room and wrapping around.
+    func selectNextUnreadRoom() {
+        guard isAuthenticated else {
+            return
+        }
+
+        let orderedRooms = roomListViewModel.sortedRooms
+        guard !orderedRooms.isEmpty else {
+            return
+        }
+
+        func isUnread(_ room: TrixRoomSummary) -> Bool {
+            room.unreadCount > 0 || roomListViewModel.isMarkedUnread(roomID: room.id)
+        }
+
+        var startIndex = 0
+        if let selectedRoomID,
+           let selectedIndex = orderedRooms.firstIndex(where: { $0.id == selectedRoomID }) {
+            startIndex = (selectedIndex + 1) % orderedRooms.count
+        }
+
+        let rotatedRooms = Array(orderedRooms[startIndex...]) + Array(orderedRooms[..<startIndex])
+        guard let targetRoom = rotatedRooms.first(where: { isUnread($0) && $0.id != selectedRoomID })
+            ?? rotatedRooms.first(where: isUnread) else {
+            return
+        }
+
+        openRoomFromKeyboardNavigation(targetRoom)
+    }
+
+    /// Captures the own read marker before the room is marked displayed so the
+    /// "New Messages" divider can be frozen at the pre-visit position.
+    private func prepareUnreadAnchor(for room: TrixRoomSummary) async {
+        guard let session else {
+            return
+        }
+
+        let readMarker = try? await trixService.readMarkerState(roomID: room.id, session: session)
+        timelineViewModel.setUnreadAnchorReadMarker(readMarker, roomID: room.id)
     }
 
     func loadTimeline(roomID: String) async {
@@ -770,6 +891,7 @@ final class TrixAppModel: ObservableObject {
         }
 
         await timelineViewModel.load(roomID: roomID, session: session, service: trixService)
+        applyOutboxEchoesToTimeline(roomID: roomID, session: session)
     }
 
     @discardableResult
@@ -795,12 +917,14 @@ final class TrixAppModel: ObservableObject {
             roomID: roomID,
             session: session,
             service: trixService,
-            metadata: metadata
+            metadata: metadata,
+            outboxStore: outboxStore
         )
         guard sentItem != nil else {
             return false
         }
 
+        clearDraft(for: roomID)
         try? await trixService.sendTypingState(.paused, roomID: roomID, session: session)
         await roomListViewModel.reload(
             session: session,
@@ -894,6 +1018,260 @@ final class TrixAppModel: ObservableObject {
         }
 
         await markLatestVisibleItemDisplayed(roomID: selectedRoomID)
+    }
+
+    // MARK: - Composer drafts
+
+    func draft(for roomID: String) -> TrixComposerDraft? {
+        draftsByRoomID[Self.normalizedDraftKey(roomID)]
+    }
+
+    func updateDraft(
+        text: String,
+        replyTargetMessageID: String?,
+        threadTargetMessageID: String?,
+        for roomID: String
+    ) {
+        let key = Self.normalizedDraftKey(roomID)
+        guard !key.isEmpty else {
+            return
+        }
+
+        let draft = TrixComposerDraft(
+            text: text,
+            replyTargetMessageID: replyTargetMessageID,
+            threadTargetMessageID: threadTargetMessageID
+        )
+        if draft.isEmpty {
+            guard draftsByRoomID.removeValue(forKey: key) != nil else {
+                return
+            }
+        } else {
+            let existingDraft = draftsByRoomID[key]
+            guard existingDraft?.text != draft.text ||
+                existingDraft?.replyTargetMessageID != draft.replyTargetMessageID ||
+                existingDraft?.threadTargetMessageID != draft.threadTargetMessageID else {
+                return
+            }
+
+            draftsByRoomID[key] = draft
+        }
+
+        scheduleDraftsPersist()
+    }
+
+    func clearDraft(for roomID: String) {
+        let key = Self.normalizedDraftKey(roomID)
+        guard draftsByRoomID.removeValue(forKey: key) != nil else {
+            return
+        }
+
+        scheduleDraftsPersist()
+    }
+
+    func flushPendingDraftSaves() {
+        draftsPersistTask?.cancel()
+        draftsPersistTask = nil
+        guard let session else {
+            return
+        }
+
+        persistDrafts(draftsByRoomID, accountID: session.userID)
+    }
+
+    private func loadComposerDrafts(for accountID: String) {
+        draftsPersistTask?.cancel()
+        draftsPersistTask = nil
+        draftsByRoomID = (try? draftStore.load(accountJID: accountID)) ?? [:]
+    }
+
+    private func scheduleDraftsPersist() {
+        guard let session else {
+            return
+        }
+
+        let accountID = session.userID
+        let snapshot = draftsByRoomID
+        draftsPersistTask?.cancel()
+        draftsPersistTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.persistDrafts(snapshot, accountID: accountID)
+        }
+    }
+
+    private func persistDrafts(_ drafts: [String: TrixComposerDraft], accountID: String) {
+        // Draft persistence is best-effort: never surface banners or log draft text.
+        try? draftStore.save(drafts, accountJID: accountID)
+    }
+
+    private static func normalizedDraftKey(_ roomID: String) -> String {
+        roomID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    // MARK: - Offline send queue
+
+    @discardableResult
+    func drainOutbox() async -> Bool {
+        guard let session, !isLoggingOut else {
+            return false
+        }
+
+        let drainKey = "outbox-drain:\(session.userID.lowercased())"
+        let didSend = try? await outboxDrainGate.value(for: drainKey) { @MainActor [weak self] in
+            await self?.performOutboxDrain(session: session) ?? false
+        }
+        return didSend ?? false
+    }
+
+    func retryOutboxMessage(_ messageID: String) async {
+        guard let session else {
+            return
+        }
+        guard let message = queuedOutboxMessages(accountID: session.userID)
+            .first(where: { $0.id == messageID }) else {
+            return
+        }
+
+        try? outboxStore.update(message.resetForRetry(), accountJID: session.userID)
+        timelineViewModel.setOutboxEchoDeliveryState(.pending, echoID: message.id, roomID: message.roomID)
+        await drainOutbox()
+
+        // If a drain was already in flight, the gate joined it instead of
+        // starting a new one, and that drain may have processed this message
+        // before the reset above. When the message is still sitting untouched
+        // in the queue, run one follow-up drain so a manual retry never no-ops.
+        let isStillUntouched = queuedOutboxMessages(accountID: session.userID)
+            .contains { $0.id == messageID && !$0.isFailed && $0.attemptCount == 0 }
+        if isStillUntouched {
+            await drainOutbox()
+        }
+    }
+
+    func deleteOutboxMessage(_ messageID: String) {
+        guard let session else {
+            return
+        }
+        guard let message = queuedOutboxMessages(accountID: session.userID)
+            .first(where: { $0.id == messageID }) else {
+            return
+        }
+
+        try? outboxStore.remove(id: message.id, accountJID: session.userID)
+        timelineViewModel.removeOutboxEcho(echoID: message.id, roomID: message.roomID)
+    }
+
+    private func performOutboxDrain(session: TrixSession) async -> Bool {
+        guard self.session?.userID == session.userID, !isLoggingOut else {
+            return false
+        }
+
+        var didSend = false
+        // Guards against a pathological loop if a store write silently fails
+        // and a processed message therefore never leaves the queue.
+        var attemptedMessageIDs = Set<String>()
+
+        // The queue is reloaded on every iteration instead of being snapshotted
+        // up front: deletes and manual retries can interleave with the awaits
+        // below, and a message the user deleted mid-drain must never be sent.
+        while true {
+            guard self.session?.userID == session.userID, !isLoggingOut else {
+                break
+            }
+            guard let message = queuedOutboxMessages(accountID: session.userID)
+                .first(where: { !$0.isFailed && !attemptedMessageIDs.contains($0.id) }) else {
+                break
+            }
+
+            attemptedMessageIDs.insert(message.id)
+            do {
+                let sentItem = try await trixService.sendText(message.sendRequest, session: session)
+                try? outboxStore.remove(id: message.id, accountJID: session.userID)
+                timelineViewModel.replaceOutboxEcho(echoID: message.id, with: sentItem, for: message.roomID)
+                didSend = true
+            } catch {
+                if TrixSendRetryPolicy.isRetryableSendError(error) {
+                    let updatedMessage = message.registeringFailedAttempt()
+                    try? outboxStore.update(updatedMessage, accountJID: session.userID)
+                    if updatedMessage.isFailed {
+                        timelineViewModel.setOutboxEchoDeliveryState(
+                            .failed,
+                            echoID: message.id,
+                            roomID: message.roomID
+                        )
+                    }
+                    // The connection is still unhealthy; keep the remaining
+                    // attempt budget for the next reconnect.
+                    break
+                }
+
+                let failedMessage = message.markingFailed()
+                try? outboxStore.update(failedMessage, accountJID: session.userID)
+                timelineViewModel.setOutboxEchoDeliveryState(
+                    .failed,
+                    echoID: message.id,
+                    roomID: message.roomID
+                )
+            }
+        }
+
+        if didSend {
+            await roomListViewModel.reload(
+                session: session,
+                service: trixService,
+                selectedRoomID: selectedRoomID,
+                showsLoading: false
+            )
+            lastRoomRefreshAt = Date()
+            refreshSelectedRoomSnapshot()
+        }
+        return didSend
+    }
+
+    private func applyOutboxEchoesToTimeline(roomID: String, session: TrixSession) {
+        let normalizedRoomID = roomID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let echoItems = queuedOutboxMessages(accountID: session.userID)
+            .filter { $0.roomID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedRoomID }
+            .map { $0.echoItem(sender: session.userID) }
+        timelineViewModel.applyOutboxItems(echoItems, for: roomID)
+    }
+
+    private func queuedOutboxMessages(accountID: String) -> [TrixOutboxMessage] {
+        (try? outboxStore.load(accountJID: accountID)) ?? []
+    }
+
+    /// Marks a room as read from the chat list: clears the local unread state
+    /// (including a manual "marked unread" flag) and sends a displayed marker
+    /// for the room's latest known message when one is available.
+    func markRoomAsRead(_ room: TrixRoomSummary) async {
+        roomListViewModel.markAsRead(roomID: room.id)
+        refreshSelectedRoomSnapshot()
+
+        guard let session else {
+            return
+        }
+
+        if selectedRoomID == room.id {
+            await markLatestVisibleItemDisplayed(roomID: room.id)
+            return
+        }
+
+        let cachedItems = (try? await trixService.cachedTimeline(roomID: room.id, session: session)) ?? []
+        guard let latestMessageID = cachedItems.last?.id else {
+            return
+        }
+
+        let marker = try? await trixService.markRoomDisplayed(
+            TrixRoomDisplayedMarkerRequest(roomID: room.id, messageID: latestMessageID),
+            session: session
+        )
+        if let marker {
+            roomListViewModel.applyReadMarker(marker)
+            refreshSelectedRoomSnapshot()
+        }
     }
 
     func beginReply(to item: TrixTimelineItem) {
@@ -1898,8 +2276,71 @@ final class TrixAppModel: ObservableObject {
     }
 
     private var totalUnreadCount: Int {
-        roomListViewModel.rooms.reduce(0) { partialResult, room in
-            partialResult + max(room.unreadCount, 0)
+        Self.applicationBadgeCount(
+            rooms: roomListViewModel.rooms,
+            markedUnreadRoomIDs: roomListViewModel.markedUnreadRoomIDs
+        )
+    }
+
+    // MARK: - Application icon badge
+
+    /// Keeps the app icon badge in sync with the in-app unread state while
+    /// the app is running, so reading a room locally also clears any
+    /// push-provided badge value.
+    private func startApplicationBadgeUpdates() {
+        applicationBadgeRefreshCancellable = roomListViewModel.$rooms
+            .combineLatest(roomListViewModel.$markedUnreadRoomIDs)
+            .sink { [weak self] rooms, markedUnreadRoomIDs in
+                // Combine does not guarantee actor isolation for publisher
+                // callbacks, so hop instead of assuming: a badge refresh one
+                // runloop turn later is harmless, a wrong-executor trap is not.
+                Task { @MainActor [weak self] in
+                    self?.applyApplicationBadge(
+                        rooms: rooms,
+                        markedUnreadRoomIDs: markedUnreadRoomIDs
+                    )
+                }
+            }
+    }
+
+    /// Badge total: server-side unread counts plus one for every room the
+    /// user manually marked unread without server unread messages.
+    static func applicationBadgeCount(
+        rooms: [TrixRoomSummary],
+        markedUnreadRoomIDs: Set<String>
+    ) -> Int {
+        rooms.reduce(0) { partialResult, room in
+            let serverUnreadCount = max(room.unreadCount, 0)
+            if serverUnreadCount > 0 {
+                return partialResult + serverUnreadCount
+            }
+
+            let roomKey = TrixRoomListPreferenceSnapshot.normalizedRoomID(room.id)
+            return partialResult + (markedUnreadRoomIDs.contains(roomKey) ? 1 : 0)
+        }
+    }
+
+    private func applyApplicationBadge(
+        rooms: [TrixRoomSummary],
+        markedUnreadRoomIDs: Set<String>
+    ) {
+        guard isAuthenticated, !isLoggingOut else {
+            return
+        }
+
+        setApplicationBadgeCount(
+            Self.applicationBadgeCount(rooms: rooms, markedUnreadRoomIDs: markedUnreadRoomIDs)
+        )
+    }
+
+    private func setApplicationBadgeCount(_ badgeCount: Int) {
+        guard lastAppliedApplicationBadgeCount != badgeCount else {
+            return
+        }
+
+        lastAppliedApplicationBadgeCount = badgeCount
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(badgeCount)
         }
     }
 
@@ -2053,6 +2494,13 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
+    private func loadRoomListPreferences(for accountID: String) {
+        roomListViewModel.attachListPreferences(
+            store: roomListPreferenceStore,
+            accountID: accountID
+        )
+    }
+
     private func syncRoomNotificationProfilesFromServerIfPossible(for session: TrixSession) async {
         do {
             let localSnapshot = roomNotificationProfileSnapshot
@@ -2155,6 +2603,11 @@ final class TrixAppModel: ObservableObject {
         ownProfile = nil
         selectedRoomID = nil
         selectedRoomSnapshot = nil
+        isQuickSwitcherPresented = false
+        // Reset the badge unconditionally on sign-out, even if a push payload
+        // applied a different value behind our back.
+        lastAppliedApplicationBadgeCount = nil
+        setApplicationBadgeCount(0)
         pushRegistration = nil
         pushRegistrationBlocker = apnsDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
         voipPushRegistration = nil
@@ -2168,6 +2621,9 @@ final class TrixAppModel: ObservableObject {
         mediaCacheSnapshot = .empty
         mediaCacheMessage = nil
         isUpdatingMediaCache = false
+        draftsPersistTask?.cancel()
+        draftsPersistTask = nil
+        draftsByRoomID = [:]
         roomNotificationProfileSnapshot = .empty
         roomNotificationProfiles = [:]
         roomNotificationProfileMessage = nil
@@ -2213,6 +2669,12 @@ extension TrixAppModel {
                     keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.room-notification-profile-key"),
                     directoryName: localProfile.directoryName("RoomNotificationProfiles")
                 ),
+                roomListPreferenceStore: TrixRoomListPreferenceStore(
+                    keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.room-list-preference-key"),
+                    directoryName: localProfile.directoryName("RoomListPreferences")
+                ),
+                draftStore: TrixDraftStore.makeDefault(localProfile: localProfile),
+                outboxStore: TrixOutboxStore.makeDefault(localProfile: localProfile),
                 trixService: XMPPMartinService(localProfile: localProfile)
             )
         }

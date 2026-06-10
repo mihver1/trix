@@ -24,6 +24,9 @@ struct TrixMacApp: App {
             }
         }
         .defaultSize(width: 1240, height: 760)
+        .commands {
+            TrixMacGoCommands(model: model)
+        }
 
         Window("Active Call", id: TrixActiveCallWindowID) {
             if XMPPLiveSmokeRunner.isRequested {
@@ -44,5 +47,25 @@ struct TrixMacApp: App {
             }
         }
         .defaultSize(width: 760, height: 620)
+    }
+}
+
+private struct TrixMacGoCommands: Commands {
+    @ObservedObject var model: TrixAppModel
+
+    var body: some Commands {
+        CommandMenu("Go") {
+            Button("Quick Open…") {
+                model.presentQuickSwitcher()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(!model.isAuthenticated)
+
+            Button("Next Unread Room") {
+                model.selectNextUnreadRoom()
+            }
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .disabled(!model.isAuthenticated)
+        }
     }
 }

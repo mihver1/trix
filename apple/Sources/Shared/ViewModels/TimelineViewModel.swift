@@ -102,9 +102,26 @@ final class TimelineViewModel: ObservableObject {
     @Published private(set) var messageActionMessageID: String?
     @Published private(set) var displayedMarkerMessageID: String?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var firstUnreadMessageID: String?
     private var cachedItemsByRoomID: [String: [TrixTimelineItem]] = [:]
     private var mentionCandidatesByRoomID: [String: [TrixMentionCandidate]] = [:]
     private var displayedMessageIDByRoomID: [String: String] = [:]
+    private var unreadAnchorContextByRoomID: [String: UnreadAnchorContext] = [:]
+    private var firstUnreadMessageIDByRoomID: [String: String] = [:]
+    /// Most-recently-used preview item ids, oldest first. Bounds the decrypted
+    /// attachment bytes held in `inlineAttachmentPreviews`: long scroll
+    /// sessions and gallery paging would otherwise accumulate every preview
+    /// for the lifetime of the room. Evicted previews reload from the
+    /// encrypted media cache when their row or gallery page is shown again.
+    private var inlineAttachmentPreviewAccessOrder: [String] = []
+    private static let maxResidentInlineAttachmentPreviews = 32
+
+    private struct UnreadAnchorContext {
+        var unreadCount: Int
+        var readMarker: TrixRoomReadMarkerState?
+        var currentUserID: String
+        var isFrozen: Bool
+    }
 
     func prepareForRoomSwitch(roomID: String) {
         guard self.roomID != roomID else {
@@ -162,6 +179,7 @@ final class TimelineViewModel: ObservableObject {
             }
 
             storeLoadedItems(loadedItems, for: roomID)
+            freezeUnreadAnchorIfNeeded(for: roomID)
             if showsLoading {
                 updateLoadProgress(roomID: roomID, fractionCompleted: 1, status: "Timeline ready")
             }
@@ -173,6 +191,7 @@ final class TimelineViewModel: ObservableObject {
             if let cachedItems = cachedItemsByRoomID[roomID] {
                 items = cachedItems
             }
+            freezeUnreadAnchorIfNeeded(for: roomID)
             errorMessage = error.trixUserFacingMessage
         }
     }
@@ -183,7 +202,8 @@ final class TimelineViewModel: ObservableObject {
         roomID: String,
         session: TrixSession,
         service: TrixRoomService,
-        metadata: TrixTextMessageSendMetadata? = nil
+        metadata: TrixTextMessageSendMetadata? = nil,
+        outboxStore: TrixOutboxStore? = nil
     ) async -> TrixTimelineItem? {
         if editingMessage != nil {
             return await editActiveMessage(text: text, roomID: roomID, session: session, service: service)
@@ -193,26 +213,108 @@ final class TimelineViewModel: ObservableObject {
         errorMessage = nil
         defer { isSending = false }
 
-        do {
-            let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !body.isEmpty else {
-                throw TrixClientError.emptyMessage
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            if self.roomID == roomID {
+                errorMessage = TrixClientError.emptyMessage.trixUserFacingMessage
             }
-            let request = TrixTextMessageSendRequest(
-                text: body,
-                roomID: roomID,
-                metadata: metadata ?? sendMetadata(for: body, roomID: roomID)
-            )
+            return nil
+        }
+
+        let request = TrixTextMessageSendRequest(
+            text: body,
+            roomID: roomID,
+            metadata: metadata ?? sendMetadata(for: body, roomID: roomID)
+        )
+        do {
             let item = try await service.sendText(request, session: session)
             let displayItem = Self.item(item, applyingLocalMetadataFrom: request.metadata)
             store(displayItem, for: roomID)
             clearReplyTarget()
             return displayItem
         } catch {
+            if let outboxStore,
+               TrixSendRetryPolicy.isRetryableSendError(error),
+               let queuedItem = queueOfflineSend(request, session: session, outboxStore: outboxStore) {
+                clearReplyTarget()
+                return queuedItem
+            }
+
             if self.roomID == roomID {
                 errorMessage = error.trixUserFacingMessage
             }
             return nil
+        }
+    }
+
+    private func queueOfflineSend(
+        _ request: TrixTextMessageSendRequest,
+        session: TrixSession,
+        outboxStore: TrixOutboxStore
+    ) -> TrixTimelineItem? {
+        // The first failed direct send counts as attempt one.
+        let message = TrixOutboxMessage(
+            roomID: request.roomID,
+            body: request.text,
+            metadata: request.metadata,
+            createdAt: Date(),
+            attemptCount: 1
+        )
+        do {
+            try outboxStore.append(message, accountJID: session.userID)
+        } catch {
+            return nil
+        }
+
+        let echoItem = message.echoItem(sender: session.userID)
+        store(echoItem, for: request.roomID)
+        return echoItem
+    }
+
+    func applyOutboxItems(_ outboxItems: [TrixTimelineItem], for roomID: String) {
+        guard !outboxItems.isEmpty else {
+            return
+        }
+
+        let mergedItems = Self.mergedTimelineItems(
+            cachedItemsByRoomID[roomID] ?? [],
+            outboxItems
+        )
+        cachedItemsByRoomID[roomID] = mergedItems
+        if self.roomID == roomID {
+            items = mergedItems
+        }
+    }
+
+    func replaceOutboxEcho(echoID: String, with item: TrixTimelineItem, for roomID: String) {
+        var cachedItems = cachedItemsByRoomID[roomID] ?? []
+        cachedItems.removeAll { $0.id == echoID }
+        let mergedItems = Self.mergedTimelineItems(cachedItems, [item])
+        cachedItemsByRoomID[roomID] = mergedItems
+        if self.roomID == roomID {
+            items = mergedItems
+        }
+    }
+
+    func removeOutboxEcho(echoID: String, roomID: String) {
+        var cachedItems = cachedItemsByRoomID[roomID] ?? items
+        cachedItems.removeAll { $0.id == echoID }
+        cachedItemsByRoomID[roomID] = cachedItems
+        if self.roomID == roomID {
+            items = cachedItems
+        }
+    }
+
+    func setOutboxEchoDeliveryState(_ deliveryState: TrixDeliveryState, echoID: String, roomID: String) {
+        var cachedItems = cachedItemsByRoomID[roomID] ?? items
+        guard let index = cachedItems.firstIndex(where: { $0.id == echoID }) else {
+            return
+        }
+
+        cachedItems[index] = cachedItems[index].withDeliveryState(deliveryState)
+        cachedItemsByRoomID[roomID] = cachedItems
+        if self.roomID == roomID {
+            items = cachedItems
         }
     }
 
@@ -428,7 +530,11 @@ final class TimelineViewModel: ObservableObject {
         session: TrixSession,
         service: TrixRoomService
     ) async -> TrixRoomReadMarkerState? {
-        guard let latestItem = items.last else {
+        // Unsent outbox echoes are local-only items: the server cannot resolve
+        // their ids, so read markers must target the last real message.
+        guard let latestItem = items.last(where: { item in
+            item.deliveryState != .pending && item.deliveryState != .failed
+        }) else {
             return nil
         }
 
@@ -438,6 +544,94 @@ final class TimelineViewModel: ObservableObject {
             session: session,
             service: service
         )
+    }
+
+    /// Starts a fresh "New Messages" anchor computation for a room visit.
+    /// The anchor is computed once after the timeline loads and stays frozen
+    /// while the user reads, until the room is selected again.
+    func prepareUnreadAnchor(roomID: String, unreadCount: Int, currentUserID: String) {
+        unreadAnchorContextByRoomID[roomID] = UnreadAnchorContext(
+            unreadCount: unreadCount,
+            readMarker: nil,
+            currentUserID: currentUserID,
+            isFrozen: false
+        )
+        firstUnreadMessageIDByRoomID[roomID] = nil
+        if self.roomID == roomID {
+            firstUnreadMessageID = nil
+        }
+    }
+
+    func setUnreadAnchorReadMarker(_ readMarker: TrixRoomReadMarkerState?, roomID: String) {
+        guard var context = unreadAnchorContextByRoomID[roomID],
+              !context.isFrozen else {
+            return
+        }
+
+        context.readMarker = readMarker
+        unreadAnchorContextByRoomID[roomID] = context
+    }
+
+    private func freezeUnreadAnchorIfNeeded(for roomID: String) {
+        guard var context = unreadAnchorContextByRoomID[roomID],
+              !context.isFrozen else {
+            return
+        }
+
+        let roomItems = cachedItemsByRoomID[roomID] ?? items
+        guard !roomItems.isEmpty else {
+            return
+        }
+
+        context.isFrozen = true
+        unreadAnchorContextByRoomID[roomID] = context
+        let anchorID = Self.firstUnreadMessageID(
+            in: roomItems,
+            readMarker: context.readMarker,
+            unreadCount: context.unreadCount,
+            currentUserID: context.currentUserID
+        )
+        firstUnreadMessageIDByRoomID[roomID] = anchorID
+        if self.roomID == roomID {
+            firstUnreadMessageID = anchorID
+        }
+    }
+
+    static func firstUnreadMessageID(
+        in items: [TrixTimelineItem],
+        readMarker: TrixRoomReadMarkerState?,
+        unreadCount: Int,
+        currentUserID: String
+    ) -> String? {
+        let currentUserKey = normalizedUserKey(currentUserID)
+        func isIncoming(_ item: TrixTimelineItem) -> Bool {
+            !item.isLocalEcho && normalizedUserKey(item.sender) != currentUserKey
+        }
+
+        let sortedItems = items.sorted { first, second in
+            if first.timestamp != second.timestamp {
+                return first.timestamp < second.timestamp
+            }
+
+            return first.id < second.id
+        }
+        guard sortedItems.contains(where: isIncoming) else {
+            return nil
+        }
+
+        if let readMarker,
+           let markerIndex = sortedItems.firstIndex(where: { $0.id == readMarker.displayedMessageID }) {
+            return sortedItems[sortedItems.index(after: markerIndex)...]
+                .first(where: isIncoming)?
+                .id
+        }
+
+        guard unreadCount > 0 else {
+            return nil
+        }
+
+        let incomingItems = sortedItems.filter(isIncoming)
+        return incomingItems.suffix(unreadCount).first?.id
     }
 
     func setReaction(
@@ -495,6 +689,7 @@ final class TimelineViewModel: ObservableObject {
 
         if let cachedPreview = inlineAttachmentPreviews[item.id] {
             downloadedAttachment = cachedPreview
+            touchResidentInlineAttachmentPreview(item.id)
             if let mediaCacheStore {
                 return try? mediaCacheStore.snapshot(accountID: session.userID)
             }
@@ -505,7 +700,7 @@ final class TimelineViewModel: ObservableObject {
            let cachedDownload = try? mediaCacheStore.loadAttachment(for: item, accountID: session.userID) {
             downloadedAttachment = cachedDownload
             if TrixInlineMediaPreviewSupport.canRenderInlinePreview(cachedDownload) {
-                inlineAttachmentPreviews[item.id] = cachedDownload
+                storeResidentInlineAttachmentPreview(cachedDownload, for: item.id)
                 inlineAttachmentPreviewFailures[item.id] = nil
             }
             return try? mediaCacheStore.snapshot(accountID: session.userID)
@@ -520,7 +715,7 @@ final class TimelineViewModel: ObservableObject {
             let download = try await service.downloadAttachment(attachment, session: session)
             downloadedAttachment = download
             if TrixInlineMediaPreviewSupport.canRenderInlinePreview(download) {
-                inlineAttachmentPreviews[item.id] = download
+                storeResidentInlineAttachmentPreview(download, for: item.id)
                 inlineAttachmentPreviewFailures[item.id] = nil
             }
             if let mediaCacheStore {
@@ -549,9 +744,19 @@ final class TimelineViewModel: ObservableObject {
         mediaCachePolicy: TrixMediaCachePolicy = .defaultPolicy
     ) async -> TrixMediaCacheSnapshot? {
         guard let attachment = item.attachment,
-              TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment),
-              inlineAttachmentPreviews[item.id] == nil,
-              !inlineAttachmentPreviewLoadingIDs.contains(item.id),
+              TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment) else {
+            return nil
+        }
+
+        if inlineAttachmentPreviews[item.id] != nil {
+            // A repeated request (row reappeared, gallery page revisited)
+            // marks the preview as recently used so the LRU cap evicts colder
+            // entries first.
+            touchResidentInlineAttachmentPreview(item.id)
+            return nil
+        }
+
+        guard !inlineAttachmentPreviewLoadingIDs.contains(item.id),
               inlineAttachmentPreviewFailures[item.id] == nil else {
             return nil
         }
@@ -559,7 +764,7 @@ final class TimelineViewModel: ObservableObject {
         if let mediaCacheStore,
            let cachedDownload = try? mediaCacheStore.loadAttachment(for: item, accountID: session.userID),
            TrixInlineMediaPreviewSupport.canRenderInlinePreview(cachedDownload) {
-            inlineAttachmentPreviews[item.id] = cachedDownload
+            storeResidentInlineAttachmentPreview(cachedDownload, for: item.id)
             return try? mediaCacheStore.snapshot(accountID: session.userID)
         }
 
@@ -575,7 +780,7 @@ final class TimelineViewModel: ObservableObject {
                 return nil
             }
 
-            inlineAttachmentPreviews[item.id] = download
+            storeResidentInlineAttachmentPreview(download, for: item.id)
             if let mediaCacheStore {
                 return try? mediaCacheStore.saveAttachment(
                     download,
@@ -595,6 +800,23 @@ final class TimelineViewModel: ObservableObject {
         return nil
     }
 
+    private func storeResidentInlineAttachmentPreview(
+        _ download: TrixAttachmentDownload,
+        for itemID: String
+    ) {
+        inlineAttachmentPreviews[itemID] = download
+        touchResidentInlineAttachmentPreview(itemID)
+        while inlineAttachmentPreviewAccessOrder.count > Self.maxResidentInlineAttachmentPreviews {
+            let evictedID = inlineAttachmentPreviewAccessOrder.removeFirst()
+            inlineAttachmentPreviews.removeValue(forKey: evictedID)
+        }
+    }
+
+    private func touchResidentInlineAttachmentPreview(_ itemID: String) {
+        inlineAttachmentPreviewAccessOrder.removeAll { $0 == itemID }
+        inlineAttachmentPreviewAccessOrder.append(itemID)
+    }
+
     func dismissDownloadedAttachment() {
         downloadedAttachment = nil
     }
@@ -606,6 +828,7 @@ final class TimelineViewModel: ObservableObject {
         inlineAttachmentPreviews = [:]
         inlineAttachmentPreviewLoadingIDs = []
         inlineAttachmentPreviewFailures = [:]
+        inlineAttachmentPreviewAccessOrder = []
     }
 
     func dismissErrorMessage() {
@@ -681,6 +904,7 @@ final class TimelineViewModel: ObservableObject {
         inlineAttachmentPreviews = [:]
         inlineAttachmentPreviewLoadingIDs = []
         inlineAttachmentPreviewFailures = [:]
+        inlineAttachmentPreviewAccessOrder = []
         attachmentSendAvailability = nil
         typingUserIDs = []
         mentionCandidates = []
@@ -691,9 +915,12 @@ final class TimelineViewModel: ObservableObject {
         messageActionMessageID = nil
         displayedMarkerMessageID = nil
         errorMessage = nil
+        firstUnreadMessageID = nil
         cachedItemsByRoomID = [:]
         mentionCandidatesByRoomID = [:]
         displayedMessageIDByRoomID = [:]
+        unreadAnchorContextByRoomID = [:]
+        firstUnreadMessageIDByRoomID = [:]
     }
 
     private func prepareForLoad(roomID: String, showsLoading: Bool) {
@@ -737,6 +964,7 @@ final class TimelineViewModel: ObservableObject {
         inlineAttachmentPreviews = [:]
         inlineAttachmentPreviewLoadingIDs = []
         inlineAttachmentPreviewFailures = [:]
+        inlineAttachmentPreviewAccessOrder = []
         attachmentSendAvailability = nil
         typingUserIDs = []
         mentionCandidates = roomID.flatMap { mentionCandidatesByRoomID[$0] } ?? []
@@ -747,6 +975,7 @@ final class TimelineViewModel: ObservableObject {
         messageActionMessageID = nil
         displayedMarkerMessageID = nil
         errorMessage = nil
+        firstUnreadMessageID = roomID.flatMap { firstUnreadMessageIDByRoomID[$0] }
     }
 
     private func setInlineAttachmentPreviewLoading(_ isLoading: Bool, for itemID: String) {
@@ -908,6 +1137,8 @@ final class TimelineViewModel: ObservableObject {
         Self.normalizedUserKey(item.sender) == Self.normalizedUserKey(currentUserID) &&
             item.attachment == nil &&
             !item.isRetracted &&
+            item.deliveryState != .pending &&
+            item.deliveryState != .failed &&
             !item.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

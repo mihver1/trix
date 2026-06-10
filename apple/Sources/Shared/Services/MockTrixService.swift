@@ -25,6 +25,7 @@ actor MockTrixService: TrixService {
     private var restoreError: TrixClientError?
     private var delayedMemberRoomIDs: Set<String>
     private var memberReleaseWaiters: [String: [CheckedContinuation<Void, Never>]]
+    private var queuedSendTextErrors: [TrixClientError]
 
     init(
         now: Date = Date(),
@@ -91,6 +92,7 @@ actor MockTrixService: TrixService {
         self.restoreError = restoreError
         self.delayedMemberRoomIDs = delayedMemberRoomIDs
         self.memberReleaseWaiters = [:]
+        self.queuedSendTextErrors = []
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
             "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
@@ -508,7 +510,21 @@ actor MockTrixService: TrixService {
         )
     }
 
+    /// Test hook: the next `sendText` calls fail with the queued errors, in
+    /// order, before any other validation runs.
+    func enqueueSendTextError(_ error: TrixClientError) {
+        queuedSendTextErrors.append(error)
+    }
+
+    func queuedSendTextErrorCount() -> Int {
+        queuedSendTextErrors.count
+    }
+
     func sendText(_ request: TrixTextMessageSendRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        if !queuedSendTextErrors.isEmpty {
+            throw queuedSendTextErrors.removeFirst()
+        }
+
         let body = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
             throw TrixClientError.emptyMessage
@@ -522,7 +538,9 @@ actor MockTrixService: TrixService {
             body: body,
             roomID: request.roomID
         )
-        let messageID = "$local-\(UUID().uuidString)"
+        // Mirrors the real service: an outbox retry supplies a stable id so a
+        // resend stays dedupable instead of minting a fresh message id.
+        let messageID = request.preferredMessageID ?? "$local-\(UUID().uuidString)"
         let thread = metadata.thread.map { thread in
             if thread.rootMessageID == nil && thread.parentMessageID == nil {
                 return TrixThreadReference(

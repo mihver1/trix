@@ -9,7 +9,61 @@ final class RoomListViewModel: ObservableObject {
     @Published private(set) var isCreatingGroupRoom = false
     @Published private(set) var invitationActionRoomID: String?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var pinnedRoomIDs: Set<String> = []
+    @Published private(set) var markedUnreadRoomIDs: Set<String> = []
     private var readMarkersByRoomID: [String: TrixRoomReadMarkerState] = [:]
+    private var listPreferences = TrixRoomListPreferenceSnapshot.empty
+    private var listPreferenceStore: TrixRoomListPreferenceStore?
+    private var listPreferenceAccountID: String?
+
+    /// Display order for the chat list: pinned rooms first (most recent
+    /// activity first among themselves), then the remaining rooms in the
+    /// order the service returned them.
+    var sortedRooms: [TrixRoomSummary] {
+        guard !pinnedRoomIDs.isEmpty else {
+            return rooms
+        }
+
+        let pinnedRooms = rooms
+            .filter { isPinned(roomID: $0.id) }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
+        guard !pinnedRooms.isEmpty else {
+            return rooms
+        }
+
+        return pinnedRooms + rooms.filter { !isPinned(roomID: $0.id) }
+    }
+
+    func attachListPreferences(store: TrixRoomListPreferenceStore, accountID: String) {
+        listPreferenceStore = store
+        listPreferenceAccountID = accountID
+        do {
+            applyListPreferenceSnapshot(try store.load(accountID: accountID))
+        } catch {
+            applyListPreferenceSnapshot(.empty)
+            errorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func isPinned(roomID: String) -> Bool {
+        pinnedRoomIDs.contains(TrixRoomListPreferenceSnapshot.normalizedRoomID(roomID))
+    }
+
+    func isMarkedUnread(roomID: String) -> Bool {
+        markedUnreadRoomIDs.contains(TrixRoomListPreferenceSnapshot.normalizedRoomID(roomID))
+    }
+
+    func togglePin(roomID: String) {
+        persistListPreferences(listPreferences.togglingPin(for: roomID))
+    }
+
+    func markAsUnread(roomID: String) {
+        persistListPreferences(listPreferences.settingMarkedUnread(true, for: roomID))
+    }
+
+    func markAsRead(roomID: String) {
+        markRead(roomID: roomID)
+    }
 
     func loadCached(
         session: TrixSession,
@@ -170,6 +224,7 @@ final class RoomListViewModel: ObservableObject {
         rooms = rooms.map { room in
             room.id.lowercased() == roomKey ? room.markingRead() : room
         }
+        persistListPreferences(listPreferences.settingMarkedUnread(false, for: roomID))
     }
 
     func applyReadMarker(_ marker: TrixRoomReadMarkerState) {
@@ -205,6 +260,34 @@ final class RoomListViewModel: ObservableObject {
         invitationActionRoomID = nil
         errorMessage = nil
         readMarkersByRoomID = [:]
+        listPreferences = .empty
+        listPreferenceStore = nil
+        listPreferenceAccountID = nil
+        pinnedRoomIDs = []
+        markedUnreadRoomIDs = []
+    }
+
+    private func persistListPreferences(_ snapshot: TrixRoomListPreferenceSnapshot) {
+        guard snapshot != listPreferences else {
+            return
+        }
+
+        applyListPreferenceSnapshot(snapshot)
+        guard let listPreferenceStore, let listPreferenceAccountID else {
+            return
+        }
+
+        do {
+            try listPreferenceStore.save(snapshot, accountID: listPreferenceAccountID)
+        } catch {
+            errorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    private func applyListPreferenceSnapshot(_ snapshot: TrixRoomListPreferenceSnapshot) {
+        listPreferences = snapshot
+        pinnedRoomIDs = snapshot.pinnedRoomIDs
+        markedUnreadRoomIDs = snapshot.markedUnreadRoomIDs
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {

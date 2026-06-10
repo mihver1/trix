@@ -273,19 +273,34 @@ struct TrixRoomListView: View {
                 TrixRoomRow(
                     room: room,
                     notificationProfile: model.roomNotificationProfile(for: room.id),
+                    isPinned: roomListViewModel.isPinned(roomID: room.id),
+                    isMarkedUnread: roomListViewModel.isMarkedUnread(roomID: room.id),
                     callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id)),
-                    mode: mode
+                    mode: mode,
+                    draftPreview: draftPreview(for: room)
                 )
             }
             .buttonStyle(.plain)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             .listRowSeparator(.visible)
+            .trixRoomListActions(
+                isPinned: roomListViewModel.isPinned(roomID: room.id),
+                isMuted: isMuted(room),
+                hasUnreadIndicator: hasUnreadIndicator(room),
+                togglePin: { togglePin(room) },
+                toggleMute: { toggleMute(room) },
+                markAsRead: { markRoomAsRead(room) },
+                markAsUnread: { markRoomAsUnread(room) }
+            )
         } else {
             TrixRoomRow(
                 room: room,
                 notificationProfile: model.roomNotificationProfile(for: room.id),
+                isPinned: roomListViewModel.isPinned(roomID: room.id),
+                isMarkedUnread: roomListViewModel.isMarkedUnread(roomID: room.id),
                 callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id)),
-                mode: mode
+                mode: mode,
+                draftPreview: draftPreview(for: room)
             )
                 .tag(room.id as String?)
                 .contentShape(Rectangle())
@@ -294,7 +309,55 @@ struct TrixRoomListView: View {
                         await model.selectRoom(room)
                     }
                 }
+                .trixRoomListActions(
+                    isPinned: roomListViewModel.isPinned(roomID: room.id),
+                    isMuted: isMuted(room),
+                    hasUnreadIndicator: hasUnreadIndicator(room),
+                    togglePin: { togglePin(room) },
+                    toggleMute: { toggleMute(room) },
+                    markAsRead: { markRoomAsRead(room) },
+                    markAsUnread: { markRoomAsUnread(room) }
+                )
         }
+    }
+
+    private func hasUnreadIndicator(_ room: TrixRoomSummary) -> Bool {
+        room.unreadCount > 0 || roomListViewModel.isMarkedUnread(roomID: room.id)
+    }
+
+    private func isMuted(_ room: TrixRoomSummary) -> Bool {
+        model.roomNotificationProfile(for: room.id) == .muted
+    }
+
+    private func togglePin(_ room: TrixRoomSummary) {
+        roomListViewModel.togglePin(roomID: room.id)
+    }
+
+    private func toggleMute(_ room: TrixRoomSummary) {
+        let newProfile: TrixRoomNotificationProfile = isMuted(room) ? .defaultProfile : .muted
+        Task {
+            await model.setRoomNotificationProfile(newProfile, for: room.id)
+        }
+    }
+
+    private func markRoomAsRead(_ room: TrixRoomSummary) {
+        Task {
+            await model.markRoomAsRead(room)
+        }
+    }
+
+    private func markRoomAsUnread(_ room: TrixRoomSummary) {
+        roomListViewModel.markAsUnread(roomID: room.id)
+    }
+
+    private func draftPreview(for room: TrixRoomSummary) -> String? {
+        guard model.selectedRoomID != room.id,
+              let draft = model.draft(for: room.id) else {
+            return nil
+        }
+
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private func openPhoneRoom(_ room: TrixRoomSummary) {
@@ -354,7 +417,7 @@ struct TrixRoomListView: View {
 
     private var visibleRooms: [TrixRoomSummary] {
         TrixRoomSearch.matchingRooms(
-            roomListViewModel.rooms,
+            roomListViewModel.sortedRooms,
             query: roomSearchViewModel.query,
             directoryResults: roomSearchViewModel.results
         )
@@ -796,14 +859,17 @@ private struct TrixCompactStatusPill: View {
 private struct TrixRoomRow: View {
     let room: TrixRoomSummary
     let notificationProfile: TrixRoomNotificationProfile
+    let isPinned: Bool
+    let isMarkedUnread: Bool
     let callIndicator: TrixRoomCallIndicator?
     let mode: TrixRoomListMode
+    var draftPreview: String? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             if mode == .phoneInbox {
                 Circle()
-                    .fill(room.unreadCount > 0 ? TrixDesign.accent : Color.clear)
+                    .fill(hasUnreadIndicator ? TrixDesign.accent : Color.clear)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
             }
@@ -826,6 +892,13 @@ private struct TrixRoomRow: View {
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
 
                     TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
+
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Pinned")
+                    }
 
                     if let callIndicator, mode != .phoneInbox {
                         TrixRoomCallIndicatorMark(indicator: callIndicator)
@@ -873,6 +946,8 @@ private struct TrixRoomRow: View {
 
                 if room.unreadCount > 0 {
                     unreadBadge
+                } else if isMarkedUnread {
+                    markedUnreadDot
                 }
             }
         case .sidebar:
@@ -893,6 +968,8 @@ private struct TrixRoomRow: View {
 
                     if room.unreadCount > 0 {
                         unreadBadge
+                    } else if isMarkedUnread {
+                        markedUnreadDot
                     }
                 }
             }
@@ -900,10 +977,21 @@ private struct TrixRoomRow: View {
         }
     }
 
+    @ViewBuilder
     private var previewText: some View {
-        Text(room.lastMessagePreview)
-            .font(.subheadline.weight(room.unreadCount > 0 ? .semibold : .regular))
-            .foregroundStyle(room.unreadCount > 0 ? Color.primary : Color.secondary)
+        if let draftPreview {
+            (
+                Text("Draft: ")
+                    .font(.subheadline.weight(.semibold))
+                + Text(draftPreview)
+                    .font(.subheadline)
+            )
+            .foregroundStyle(TrixDesign.accent)
+        } else {
+            Text(room.lastMessagePreview)
+                .font(.subheadline.weight(room.unreadCount > 0 ? .semibold : .regular))
+                .foregroundStyle(room.unreadCount > 0 ? Color.primary : Color.secondary)
+        }
     }
 
     private var unreadBadge: some View {
@@ -915,16 +1003,35 @@ private struct TrixRoomRow: View {
             .foregroundStyle(.white)
     }
 
+    private var markedUnreadDot: some View {
+        Circle()
+            .fill(TrixDesign.accent)
+            .frame(width: 10, height: 10)
+            .accessibilityLabel("Marked unread")
+    }
+
+    private var hasUnreadIndicator: Bool {
+        room.unreadCount > 0 || isMarkedUnread
+    }
+
     private var sidebarPreviewFadeWidth: CGFloat {
-        room.unreadCount > 0 ? 108 : 72
+        hasUnreadIndicator ? 108 : 72
     }
 
     private var accessibilityLabel: String {
-        let unread = room.unreadCount > 0 ? ", \(cappedUnreadCount) unread" : ", no unread messages"
+        let unread: String
+        if room.unreadCount > 0 {
+            unread = ", \(cappedUnreadCount) unread"
+        } else if isMarkedUnread {
+            unread = ", marked unread"
+        } else {
+            unread = ", no unread messages"
+        }
+        let pinned = isPinned ? ", pinned" : ""
         let encrypted = room.isEncrypted ? ", encrypted" : ", not encrypted"
         let notifications = notificationProfile == .defaultProfile ? "" : ", \(notificationProfile.label)"
         let call = callIndicator.map { ", \($0.accessibilityLabel)" } ?? ""
-        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted)\(notifications)\(call), \(room.lastMessagePreview)"
+        return "\(roomTitle), \(room.kind.label)\(unread)\(pinned)\(encrypted)\(notifications)\(call), \(room.lastMessagePreview)"
     }
 
     private var roomTitle: String {
@@ -1101,6 +1208,79 @@ private struct TrixInviteRow: View {
 }
 
 private extension View {
+    /// Chat list row actions: swipe actions on iOS (leading: read/unread,
+    /// trailing: pin and mute), context menu with the same actions on macOS.
+    @ViewBuilder
+    func trixRoomListActions(
+        isPinned: Bool,
+        isMuted: Bool,
+        hasUnreadIndicator: Bool,
+        togglePin: @escaping () -> Void,
+        toggleMute: @escaping () -> Void,
+        markAsRead: @escaping () -> Void,
+        markAsUnread: @escaping () -> Void
+    ) -> some View {
+        #if os(iOS)
+        self
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if hasUnreadIndicator {
+                    Button(action: markAsRead) {
+                        Label("Mark as Read", systemImage: "envelope.open")
+                    }
+                    .tint(.blue)
+                } else {
+                    Button(action: markAsUnread) {
+                        Label("Mark as Unread", systemImage: "envelope.badge")
+                    }
+                    .tint(.blue)
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(action: togglePin) {
+                    Label(
+                        isPinned ? "Unpin" : "Pin",
+                        systemImage: isPinned ? "pin.slash.fill" : "pin.fill"
+                    )
+                }
+                .tint(.orange)
+
+                Button(action: toggleMute) {
+                    Label(
+                        isMuted ? "Unmute" : "Mute",
+                        systemImage: isMuted ? "bell.fill" : "bell.slash.fill"
+                    )
+                }
+                .tint(.indigo)
+            }
+        #else
+        contextMenu {
+            if hasUnreadIndicator {
+                Button(action: markAsRead) {
+                    Label("Mark as Read", systemImage: "envelope.open")
+                }
+            } else {
+                Button(action: markAsUnread) {
+                    Label("Mark as Unread", systemImage: "envelope.badge")
+                }
+            }
+
+            Button(action: togglePin) {
+                Label(
+                    isPinned ? "Unpin" : "Pin",
+                    systemImage: isPinned ? "pin.slash.fill" : "pin.fill"
+                )
+            }
+
+            Button(action: toggleMute) {
+                Label(
+                    isMuted ? "Unmute" : "Mute",
+                    systemImage: isMuted ? "bell" : "bell.slash"
+                )
+            }
+        }
+        #endif
+    }
+
     @ViewBuilder
     func trixInviteSwipeActions(
         isEnabled: Bool,

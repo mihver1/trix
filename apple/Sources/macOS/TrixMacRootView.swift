@@ -73,6 +73,9 @@ private struct TrixMacWorkspaceView: View {
         .sheet(isPresented: $isShowingNewRoom) {
             TrixNewRoomView(model: model)
         }
+        .sheet(isPresented: $model.isQuickSwitcherPresented) {
+            TrixQuickSwitcherView(model: model)
+        }
         .background {
             TrixMacWindowActivityObserver { isActive in
                 isWorkspaceWindowActive = isActive
@@ -267,10 +270,15 @@ private struct TrixMacRoomListView: View {
                         TrixMacRoomRow(
                             room: room,
                             notificationProfile: model.roomNotificationProfile(for: room.id),
+                            isPinned: roomListViewModel.isPinned(roomID: room.id),
+                            isMarkedUnread: roomListViewModel.isMarkedUnread(roomID: room.id),
                             callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id))
                         )
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
+                            .contextMenu {
+                                roomContextMenuItems(room)
+                            }
                     }
                 }
             } header: {
@@ -359,6 +367,58 @@ private struct TrixMacRoomListView: View {
     }
 
     @ViewBuilder
+    private func roomContextMenuItems(_ room: TrixRoomSummary) -> some View {
+        if hasUnreadIndicator(room) {
+            Button {
+                Task {
+                    await model.markRoomAsRead(room)
+                }
+            } label: {
+                Label("Mark as Read", systemImage: "envelope.open")
+            }
+        } else {
+            Button {
+                roomListViewModel.markAsUnread(roomID: room.id)
+            } label: {
+                Label("Mark as Unread", systemImage: "envelope.badge")
+            }
+        }
+
+        Button {
+            roomListViewModel.togglePin(roomID: room.id)
+        } label: {
+            Label(
+                roomListViewModel.isPinned(roomID: room.id) ? "Unpin" : "Pin",
+                systemImage: roomListViewModel.isPinned(roomID: room.id) ? "pin.slash.fill" : "pin.fill"
+            )
+        }
+
+        Button {
+            toggleMute(room)
+        } label: {
+            Label(
+                isMuted(room) ? "Unmute" : "Mute",
+                systemImage: isMuted(room) ? "bell" : "bell.slash"
+            )
+        }
+    }
+
+    private func hasUnreadIndicator(_ room: TrixRoomSummary) -> Bool {
+        room.unreadCount > 0 || roomListViewModel.isMarkedUnread(roomID: room.id)
+    }
+
+    private func isMuted(_ room: TrixRoomSummary) -> Bool {
+        model.roomNotificationProfile(for: room.id) == .muted
+    }
+
+    private func toggleMute(_ room: TrixRoomSummary) {
+        let newProfile: TrixRoomNotificationProfile = isMuted(room) ? .defaultProfile : .muted
+        Task {
+            await model.setRoomNotificationProfile(newProfile, for: room.id)
+        }
+    }
+
+    @ViewBuilder
     private var searchSection: some View {
         Section {
             TrixRoomSearchField(
@@ -436,7 +496,7 @@ private struct TrixMacRoomListView: View {
 
     private var visibleRooms: [TrixRoomSummary] {
         TrixRoomSearch.matchingRooms(
-            roomListViewModel.rooms,
+            roomListViewModel.sortedRooms,
             query: roomSearchViewModel.query,
             directoryResults: roomSearchViewModel.results
         )
@@ -500,6 +560,7 @@ private struct TrixMacRoomContextView: View {
     @State private var isUpdatingMembership = false
     @State private var isCommonChatsExpanded = true
     @State private var isSharedMediaExpanded = true
+    @State private var mediaGalleryContext: TrixMediaGalleryContext?
 
     init(model: TrixAppModel, room: TrixRoomSummary?) {
         self.model = model
@@ -536,6 +597,7 @@ private struct TrixMacRoomContextView: View {
             }
             .background(TrixDesign.screenBackground)
             .navigationTitle(room.kind == .direct ? "Contact" : "Room")
+            .trixMediaGalleryPresentation(item: $mediaGalleryContext, model: model)
             .task(id: room.id) {
                 await loadInspector(room: room)
             }
@@ -724,8 +786,15 @@ private struct TrixMacRoomContextView: View {
                             isLoadingPreview: timelineViewModel.inlineAttachmentPreviewLoadingIDs.contains(item.id),
                             previewFailure: timelineViewModel.inlineAttachmentPreviewFailures[item.id],
                             open: {
-                                Task {
-                                    await model.downloadAttachment(for: item)
+                                if TrixRoomMediaCollector.isGalleryItem(item) {
+                                    mediaGalleryContext = TrixMediaGalleryContext(
+                                        roomID: timelineViewModel.roomID ?? item.roomID,
+                                        initialItemID: item.id
+                                    )
+                                } else {
+                                    Task {
+                                        await model.downloadAttachment(for: item)
+                                    }
                                 }
                             },
                             loadPreview: {
@@ -1080,7 +1149,7 @@ private struct TrixMacRoomContextView: View {
     }
 
     private func sharedMediaItems(for room: TrixRoomSummary) -> [TrixTimelineItem] {
-        timelineItems(for: room).filter { $0.attachment != nil }
+        TrixRoomMediaCollector.attachmentItems(in: timelineItems(for: room))
     }
 
     private func timelineItems(for room: TrixRoomSummary) -> [TrixTimelineItem] {
@@ -1361,6 +1430,8 @@ private struct TrixMacMetadataRow: View {
 private struct TrixMacRoomRow: View {
     let room: TrixRoomSummary
     let notificationProfile: TrixRoomNotificationProfile
+    let isPinned: Bool
+    let isMarkedUnread: Bool
     let callIndicator: TrixRoomCallIndicator?
 
     var body: some View {
@@ -1379,6 +1450,12 @@ private struct TrixMacRoomRow: View {
                         .lineLimit(1)
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
                     TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Pinned")
+                    }
                     if let callIndicator {
                         TrixRoomCallIndicatorMark(indicator: callIndicator)
                     }
@@ -1407,6 +1484,8 @@ private struct TrixMacRoomRow: View {
 
                         if room.unreadCount > 0 {
                             unreadBadge
+                        } else if isMarkedUnread {
+                            markedUnreadDot
                         }
                     }
                 }
@@ -1426,8 +1505,15 @@ private struct TrixMacRoomRow: View {
             .foregroundStyle(.white)
     }
 
+    private var markedUnreadDot: some View {
+        Circle()
+            .fill(TrixDesign.accent)
+            .frame(width: 10, height: 10)
+            .accessibilityLabel("Marked unread")
+    }
+
     private var previewFadeWidth: CGFloat {
-        room.unreadCount > 0 ? 108 : 72
+        room.unreadCount > 0 || isMarkedUnread ? 108 : 72
     }
 }
 

@@ -64,6 +64,10 @@ struct TrixTimelineView: View {
     @State private var lastDisplayedMarkerMessageID: String?
     @State private var selectedMentionProfile: TrixMentionProfileSelection?
     @State private var directUserActivity: TrixUserActivity?
+    @State private var suppressDraftPersistence = false
+    @State private var hasCompletedInitialTimelineScroll = false
+    @State private var lastObservedTimelineItemID: String?
+    @State private var mediaGalleryContext: TrixMediaGalleryContext?
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -98,6 +102,9 @@ struct TrixTimelineView: View {
                             case .daySeparator(let id, let date):
                                 TrixTimelineDaySeparator(date: date)
                                     .id(id)
+                            case .unreadSeparator(let id):
+                                TrixTimelineUnreadSeparator()
+                                    .id(id)
                             case .message(let presentation):
                                 TrixTimelineRow(
                                     presentation: presentation,
@@ -113,8 +120,15 @@ struct TrixTimelineView: View {
                                     inlineAttachmentPreviewFailure: timelineViewModel.inlineAttachmentPreviewFailures[presentation.item.id],
                                     isReacting: timelineViewModel.reactionActionMessageID == presentation.item.id,
                                     downloadAttachment: {
-                                        Task {
-                                            await model.downloadAttachment(for: presentation.item)
+                                        if TrixRoomMediaCollector.isGalleryItem(presentation.item) {
+                                            mediaGalleryContext = TrixMediaGalleryContext(
+                                                roomID: timelineViewModel.roomID ?? room.id,
+                                                initialItemID: presentation.item.id
+                                            )
+                                        } else {
+                                            Task {
+                                                await model.downloadAttachment(for: presentation.item)
+                                            }
                                         }
                                     },
                                     loadInlineAttachmentPreview: {
@@ -149,6 +163,14 @@ struct TrixTimelineView: View {
                                         Task {
                                             await model.importStickerPack(from: metadata)
                                         }
+                                    },
+                                    retryFailedSend: {
+                                        Task {
+                                            await model.retryOutboxMessage(presentation.item.id)
+                                        }
+                                    },
+                                    deleteFailedSend: {
+                                        model.deleteOutboxMessage(presentation.item.id)
                                     }
                                 )
                                 .id(presentation.item.id)
@@ -163,17 +185,29 @@ struct TrixTimelineView: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     timelineBottomControls
                 }
+                .onChange(of: room.id) { _, _ in
+                    hasCompletedInitialTimelineScroll = false
+                    lastObservedTimelineItemID = nil
+                }
                 .onChange(of: timelineViewModel.items) { _, items in
-                    guard timelineViewModel.roomID == room.id else {
+                    handleTimelineItemsChange(items, proxy: proxy)
+                }
+                .onChange(of: timelineViewModel.firstUnreadMessageID) { _, _ in
+                    guard !hasCompletedInitialTimelineScroll,
+                          timelineViewModel.roomID == room.id else {
                         return
                     }
-                    guard let last = items.last else {
+                    applyInitialTimelinePosition(visibleTimelineItems, proxy: proxy)
+                }
+                .task(id: room.id) {
+                    let items = visibleTimelineItems
+                    guard !hasCompletedInitialTimelineScroll,
+                          timelineViewModel.roomID == room.id,
+                          !items.isEmpty else {
                         return
                     }
-                    withAnimation(.snappy(duration: 0.24)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                    markLatestVisibleMessageDisplayed(items)
+                    applyInitialTimelinePosition(items, proxy: proxy)
+                    lastObservedTimelineItemID = items.last?.id
                 }
             }
         }
@@ -225,6 +259,7 @@ struct TrixTimelineView: View {
                 TrixAttachmentPreviewView(attachment: attachment)
             }
         }
+        .trixMediaGalleryPresentation(item: $mediaGalleryContext, model: model)
         .sheet(isPresented: $isShowingDeviceTrust) {
             if room.kind == .group {
                 TrixGroupDeviceTrustView(
@@ -345,9 +380,11 @@ struct TrixTimelineView: View {
         .task(id: room.id) {
             resetDeviceTrustState()
             resetComposerState()
+            restoreComposerDraftText()
             if timelineViewModel.roomID != room.id {
                 await model.selectRoom(room)
             }
+            restoreComposerDraftContext()
             await loadMentionMembers()
             markLatestVisibleMessageDisplayed(timelineViewModel.items)
             await loadDirectUserActivity()
@@ -401,6 +438,7 @@ struct TrixTimelineView: View {
         .onDisappear {
             typingPauseTask?.cancel()
             sendTypingStateIfNeeded(.paused)
+            model.flushPendingDraftSaves()
         }
     }
 
@@ -771,6 +809,10 @@ struct TrixTimelineView: View {
                     }
                     .layoutPriority(1)
                     .trixMacComposerReturn(text: $draft, send: sendDraft)
+                    .trixMacComposerEditingShortcuts(
+                        editLastOwnMessage: beginEditingLastOwnMessageFromComposer,
+                        cancelActiveContext: cancelComposerContextFromKeyboard
+                    )
 
                 Button {
                     sendDraft()
@@ -844,7 +886,10 @@ struct TrixTimelineView: View {
     }
 
     private var timelineEntries: [TrixTimelineEntry] {
-        Self.timelineEntries(for: visibleTimelineItems)
+        Self.timelineEntries(
+            for: visibleTimelineItems,
+            firstUnreadMessageID: timelineViewModel.firstUnreadMessageID
+        )
     }
 
     private var visibleTimelineItems: [TrixTimelineItem] {
@@ -1093,6 +1138,7 @@ struct TrixTimelineView: View {
         editingItem = nil
         threadDraftTarget = nil
         replyDraftTarget = item
+        persistComposerDraft()
     }
 
     private func startThreadReply(to item: TrixTimelineItem) {
@@ -1104,6 +1150,7 @@ struct TrixTimelineView: View {
         editingItem = nil
         replyDraftTarget = nil
         threadDraftTarget = item
+        persistComposerDraft()
         openThread(for: item)
     }
 
@@ -1120,16 +1167,64 @@ struct TrixTimelineView: View {
     }
 
     private func cancelComposerContext() {
+        let wasEditing = editingItem != nil
         replyDraftTarget = nil
         threadDraftTarget = nil
         editingItem = nil
-        selectedMentionTargets = [:]
-        draft = ""
+
+        if wasEditing {
+            // The composer mirrored the edited message body. Bring back the
+            // saved draft (the text typed before editing started) instead of
+            // leaving the edited body or wiping the stored draft.
+            selectedMentionTargets = [:]
+            setDraftProgrammatically(model.draft(for: room.id)?.text ?? "")
+            restoreComposerDraftContext()
+            return
+        }
+
+        // Cancelling a reply/thread context must keep the typed text: only
+        // the context attachment goes away, and the stored draft is updated
+        // to drop the now-cleared reply/thread reference.
+        persistComposerDraft()
+    }
+
+    /// Up arrow in an empty macOS composer starts editing the latest own
+    /// editable message, mirroring the timeline context menu's edit action.
+    private func beginEditingLastOwnMessageFromComposer() -> Bool {
+        guard editingItem == nil,
+              replyDraftTarget == nil,
+              threadDraftTarget == nil,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let lastOwnItem = timelineViewModel.items.last(where: isOwnTextMessage) else {
+            return false
+        }
+
+        startEditing(lastOwnItem)
+        return true
+    }
+
+    /// Escape in the macOS composer cancels the active edit or reply, or
+    /// closes the thread context, reusing the banner close paths.
+    private func cancelComposerContextFromKeyboard() -> Bool {
+        if editingItem != nil || replyDraftTarget != nil {
+            cancelComposerContext()
+            return true
+        }
+
+        if threadDraftTarget != nil || activeThreadFilter != nil {
+            closeThread()
+            return true
+        }
+
+        return false
     }
 
     private func clearThreadContext() {
         threadDraftTarget = nil
         activeThreadFilter = nil
+        // Keep the stored draft in sync: the thread reference is gone, the
+        // typed text stays.
+        persistComposerDraft()
     }
 
     private func closeThread() {
@@ -1143,7 +1238,7 @@ struct TrixTimelineView: View {
     }
 
     private func resetComposerState() {
-        draft = ""
+        setDraftProgrammatically("")
         selectedMentionTargets = [:]
         replyDraftTarget = nil
         threadDraftTarget = nil
@@ -1151,6 +1246,64 @@ struct TrixTimelineView: View {
         retractionCandidate = nil
         activeThreadFilter = nil
         lastDisplayedMarkerMessageID = nil
+    }
+
+    /// Changes the composer text without treating it as user input: skips the
+    /// typing notification and draft persistence for the resulting change.
+    private func setDraftProgrammatically(_ value: String) {
+        guard draft != value else {
+            return
+        }
+
+        suppressDraftPersistence = true
+        draft = value
+    }
+
+    private func restoreComposerDraftText() {
+        guard let savedDraft = model.draft(for: room.id),
+              !savedDraft.text.isEmpty else {
+            return
+        }
+
+        setDraftProgrammatically(savedDraft.text)
+    }
+
+    private func restoreComposerDraftContext() {
+        guard editingItem == nil,
+              replyDraftTarget == nil,
+              threadDraftTarget == nil,
+              let savedDraft = model.draft(for: room.id) else {
+            return
+        }
+
+        // Restore the reply/thread context only when the referenced message
+        // still resolves in the loaded timeline; otherwise keep just the text.
+        if let replyTargetMessageID = savedDraft.replyTargetMessageID,
+           let target = timelineViewModel.items.first(where: { $0.id == replyTargetMessageID }),
+           !target.isRetracted {
+            replyDraftTarget = target
+            return
+        }
+
+        if room.kind == .group,
+           let threadTargetMessageID = savedDraft.threadTargetMessageID,
+           let target = timelineViewModel.items.first(where: { $0.id == threadTargetMessageID }),
+           !target.isRetracted {
+            threadDraftTarget = target
+        }
+    }
+
+    private func persistComposerDraft() {
+        guard editingItem == nil else {
+            return
+        }
+
+        model.updateDraft(
+            text: draft,
+            replyTargetMessageID: replyDraftTarget?.id,
+            threadTargetMessageID: threadDraftTarget?.id,
+            for: room.id
+        )
     }
 
     private func openThread(for item: TrixTimelineItem) {
@@ -1183,7 +1336,12 @@ struct TrixTimelineView: View {
     private func isOwnTextMessage(_ item: TrixTimelineItem) -> Bool {
         item.isLocalEcho &&
             item.attachment == nil &&
+            !isUnsentOutboxEcho(item) &&
             !item.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func isUnsentOutboxEcho(_ item: TrixTimelineItem) -> Bool {
+        item.deliveryState == .pending || item.deliveryState == .failed
     }
 
     private var lastEditableOwnTextMessageID: String? {
@@ -1334,7 +1492,7 @@ struct TrixTimelineView: View {
 
     private func markLatestVisibleMessageDisplayed(_ items: [TrixTimelineItem]) {
         guard timelineViewModel.roomID == room.id,
-              let latest = items.last,
+              let latest = items.last(where: { !isUnsentOutboxEcho($0) }),
               latest.id != lastDisplayedMarkerMessageID else {
             return
         }
@@ -1342,6 +1500,49 @@ struct TrixTimelineView: View {
         lastDisplayedMarkerMessageID = latest.id
         Task {
             await model.markRoomDisplayed(roomID: room.id, messageID: latest.id)
+        }
+    }
+
+    private func handleTimelineItemsChange(_ items: [TrixTimelineItem], proxy: ScrollViewProxy) {
+        guard timelineViewModel.roomID == room.id else {
+            return
+        }
+        guard let last = items.last else {
+            return
+        }
+        defer {
+            lastObservedTimelineItemID = last.id
+            markLatestVisibleMessageDisplayed(items)
+        }
+
+        if !hasCompletedInitialTimelineScroll {
+            // Initial load for this visit: position on the unread divider (or
+            // bottom) without animation instead of jumping to the newest item.
+            if !timelineViewModel.isLoading {
+                hasCompletedInitialTimelineScroll = true
+            }
+            applyInitialTimelinePosition(items, proxy: proxy)
+            return
+        }
+
+        guard last.id != lastObservedTimelineItemID else {
+            return
+        }
+
+        withAnimation(.snappy(duration: 0.24)) {
+            proxy.scrollTo(last.id, anchor: .bottom)
+        }
+    }
+
+    private func applyInitialTimelinePosition(_ items: [TrixTimelineItem], proxy: ScrollViewProxy) {
+        if let firstUnreadMessageID = timelineViewModel.firstUnreadMessageID,
+           items.contains(where: { $0.id == firstUnreadMessageID }) {
+            proxy.scrollTo(Self.unreadSeparatorEntryID, anchor: .center)
+            return
+        }
+
+        if let last = items.last {
+            proxy.scrollTo(last.id, anchor: .bottom)
         }
     }
 
@@ -1651,7 +1852,14 @@ struct TrixTimelineView: View {
     }
 
     private func handleDraftChange(_ value: String) {
+        let wasProgrammaticChange = suppressDraftPersistence
+        suppressDraftPersistence = false
         pruneMentionTargets()
+        if wasProgrammaticChange {
+            return
+        }
+
+        persistComposerDraft()
         typingPauseTask?.cancel()
         guard canSendEncrypted else {
             sendTypingStateIfNeeded(.paused)
@@ -2067,7 +2275,12 @@ struct TrixTimelineView: View {
             }
     }
 
-    private static func timelineEntries(for items: [TrixTimelineItem]) -> [TrixTimelineEntry] {
+    fileprivate static let unreadSeparatorEntryID = "trix-unread-separator"
+
+    private static func timelineEntries(
+        for items: [TrixTimelineItem],
+        firstUnreadMessageID: String? = nil
+    ) -> [TrixTimelineEntry] {
         let sortedItems = items.sorted { first, second in
             if first.timestamp != second.timestamp {
                 return first.timestamp < second.timestamp
@@ -2087,6 +2300,10 @@ struct TrixTimelineView: View {
             if previous.map({ !calendar.isDate($0.timestamp, inSameDayAs: item.timestamp) }) ?? true {
                 let dayID = "day-\(calendar.startOfDay(for: item.timestamp).timeIntervalSince1970)"
                 entries.append(.daySeparator(id: dayID, date: item.timestamp))
+            }
+
+            if let firstUnreadMessageID, item.id == firstUnreadMessageID {
+                entries.append(.unreadSeparator(id: unreadSeparatorEntryID))
             }
 
             let startsCluster = previous.map { previousItem in
@@ -2206,11 +2423,14 @@ private extension View {
 
 private enum TrixTimelineEntry: Identifiable {
     case daySeparator(id: String, date: Date)
+    case unreadSeparator(id: String)
     case message(TrixTimelineMessagePresentation)
 
     var id: String {
         switch self {
         case .daySeparator(let id, _):
+            return id
+        case .unreadSeparator(let id):
             return id
         case .message(let presentation):
             return presentation.item.id
@@ -2570,6 +2790,30 @@ private struct TrixTimelineDaySeparator: View {
         formatter.timeStyle = .none
         return formatter
     }()
+}
+
+private struct TrixTimelineUnreadSeparator: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(TrixDesign.accent.opacity(0.45))
+                .frame(height: 1)
+
+            Label("New Messages", systemImage: "arrow.down")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TrixDesign.accent)
+                .lineLimit(1)
+
+            Rectangle()
+                .fill(TrixDesign.accent.opacity(0.45))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("New messages below")
+    }
 }
 
 private func trixNormalizedUserKey(_ userID: String) -> String {
@@ -3372,6 +3616,8 @@ private struct TrixTimelineRow: View {
     let openThread: () -> Void
     let openMention: (String) -> Void
     let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
+    let retryFailedSend: () -> Void
+    let deleteFailedSend: () -> Void
     #if DEBUG
     @AppStorage(TrixDebugSettings.showOMEMORecipientKeyCountsKey)
     private var showOMEMORecipientKeyCounts = false
@@ -3535,7 +3781,7 @@ private struct TrixTimelineRow: View {
         }
         .padding(.top, presentation.startsCluster ? 8 : 2)
         .contextMenu {
-            if !item.isRetracted {
+            if !item.isRetracted && !isUnsentLocalEcho {
                 Button {
                     reply()
                 } label: {
@@ -3548,6 +3794,20 @@ private struct TrixTimelineRow: View {
                     } label: {
                         Label("Reply in Thread", systemImage: "text.bubble")
                     }
+                }
+            }
+
+            if isFailedLocalEcho {
+                Button {
+                    retryFailedSend()
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+
+                Button(role: .destructive) {
+                    deleteFailedSend()
+                } label: {
+                    Label("Delete", systemImage: "trash")
                 }
             }
 
@@ -3569,6 +3829,15 @@ private struct TrixTimelineRow: View {
                 }
             }
         }
+    }
+
+    private var isUnsentLocalEcho: Bool {
+        item.isLocalEcho &&
+            (item.deliveryState == .pending || item.deliveryState == .failed)
+    }
+
+    private var isFailedLocalEcho: Bool {
+        item.isLocalEcho && item.deliveryState == .failed
     }
 
     private var displaySender: String {
@@ -4975,6 +5244,27 @@ private extension View {
             send()
             return .handled
         }
+        #else
+        self
+        #endif
+    }
+
+    /// macOS composer shortcuts: Up arrow edits the latest own message when
+    /// the handler reports it could start an edit, Escape cancels the active
+    /// composer context. Both fall through to default key handling otherwise.
+    @ViewBuilder
+    func trixMacComposerEditingShortcuts(
+        editLastOwnMessage: @escaping () -> Bool,
+        cancelActiveContext: @escaping () -> Bool
+    ) -> some View {
+        #if os(macOS)
+        self
+            .onKeyPress(.upArrow, phases: .down) { _ in
+                editLastOwnMessage() ? .handled : .ignored
+            }
+            .onKeyPress(.escape, phases: .down) { _ in
+                cancelActiveContext() ? .handled : .ignored
+            }
         #else
         self
         #endif

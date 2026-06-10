@@ -75,6 +75,83 @@ copying old implementation details.
       when new incoming activity updates the preview. Outgoing previews use a
       `You:` prefix and do not increment local unread. Server-backed unread
       state and chat-marker/read-marker sync remain open.
+- [x] Chat list pin/mute/mark-read-unread actions. Pinned rooms sort above the
+      rest with recent-activity ordering inside each section; iOS rows expose
+      swipe actions and macOS rows a context menu for pin/unpin, mute/unmute
+      (switching the existing per-room notification profile), and mark
+      read/unread. Mark-as-read also sends the existing displayed marker,
+      opening a room clears a manual unread mark, and marked-unread state
+      survives room-list reloads. Pins and marked-unread sets persist per
+      account in the encrypted `TrixRoomListPreferenceStore` with its key in
+      Keychain. Unit-tested on 2026-06-10 (store roundtrip without plaintext
+      at rest, pinned-first sorting, marked-unread reload survival, persisted
+      pin toggles); no live smoke. Follow-up: pinned/marked-unread state is
+      local-only in this slice and still needs PEP sync across devices.
+- [x] Persistent per-room composer drafts. Draft text plus reply/thread
+      context is saved per account and room into the encrypted
+      `TrixDraftStore` (AES-GCM with the account id bound as AAD,
+      Keychain-held key), debounced while typing, restored when reopening the
+      room (reply/thread context only while the target message still
+      resolves), cleared after a successful send, and shown in the chat list
+      as an accented `Draft:` preview replacing the last-message preview for
+      unselected rooms. Cancelling a reply/thread context keeps the typed
+      text and only drops the context; cancelling an edit restores the
+      pre-edit draft. Draft text is never logged. Unit-tested on 2026-06-10
+      (roundtrip with context targets, no plaintext at rest, empty-draft
+      cleanup, per-room clear); no live smoke.
+- [x] "New Messages" unread divider with unread-anchored initial scroll. On
+      room entry the first unread incoming message is computed from
+      read-marker state with an unread-count fallback and frozen for the
+      visit; the timeline renders a labeled divider above it and the initial
+      scroll anchors to the divider instead of the bottom when unread items
+      exist. Auto-scroll to the bottom still happens only for newly appended
+      messages, not on initial load. Unit-tested on 2026-06-10 (eight
+      marker/fallback anchor scenarios); no live smoke. Follow-up: a visible
+      read-receipts UI on top of existing delivery decorations remains open.
+- [x] macOS quick switcher, composer hotkeys, and in-app Dock badge. Cmd+K
+      opens a keyboard-driven fuzzy switcher over rooms with a directory
+      people fallback for new DMs (Enter opens, Esc closes), and Cmd+Shift+U
+      jumps to the next unread room. In the composer, Up arrow on an empty
+      draft starts editing the last own message and Esc cancels the active
+      edit/reply/thread context. The Dock badge now tracks in-app unread
+      state (server unread plus manually marked-unread rooms), reconciles
+      with push-provided badge values, and resets on sign-out. Unit-tested on
+      2026-06-10 (fuzzy matcher tiers/diacritics/multi-token rules,
+      badge-count composition); no live smoke. Follow-up: runtime smoke of
+      the macOS `onKeyPress` composer shortcuts on a live build.
+- [x] Offline send outbox for text messages. Retryable connection-level send
+      failures (connection failed, stream timeout/not-found, URL/POSIX
+      network errors) enqueue the message into the encrypted per-account
+      `TrixOutboxStore` (AES-GCM with the account id bound as AAD,
+      Keychain-held key) and show a local `.pending` echo; fatal failures
+      (validation, OMEMO trust, `undefined_condition`) keep the existing
+      fail-closed inline error and are never queued. The queue drains
+      sequentially oldest-first after login, session restore, and reconnect,
+      reloading the queue per iteration so mid-drain deletes/retries are
+      honored, stopping on connection errors so a stuck older message is
+      never overtaken, replacing echoes with the real sent items, and marking
+      messages `.failed` with visible Retry/Delete row actions after the
+      attempt budget is exhausted. Retries reuse the queued message id as the
+      stanza/origin id so XEP-0359-aware recipients can dedupe an ambiguous
+      first attempt. Queued unsent messages are cleared on explicit sign-out.
+      OMEMO encryption still happens only at actual send time in the existing
+      service path; queued bodies are stored encrypted at rest and never
+      logged. Unit-tested on 2026-06-10 (store roundtrip, retryable-error
+      classification, fail-then-succeed drain, attempt-budget exhaustion,
+      fatal-error non-queueing, retry/delete flows, stable id across retries,
+      encrypted-at-rest raw-file check, oldest-first ordering across a
+      partial failure); no live smoke.
+- [x] Full-screen media gallery for room images. Tapping a previewable image
+      or sticker in the timeline, or a shared-media row in the macOS
+      inspector, opens a gallery over the room's media (timestamp-ordered,
+      retracted items excluded) with paging plus pinch/double-tap zoom on
+      iOS, chevron and arrow-key navigation on macOS, and share/save
+      controls, all backed by the existing encrypted attachment
+      download/cache path (`TrixRoomMediaCollector`,
+      `TrixMediaGalleryView`). Unit-tested on 2026-06-10 (media filtering,
+      ordering, gallery membership/index); no live smoke. Follow-up:
+      animated GIFs currently render their first frame in the gallery;
+      animated playback remains open.
 - [x] Delivery decorations.
 - [x] Typing indicators.
 - [x] Message reactions. The Apple model/service/view-model boundary,
@@ -634,3 +711,17 @@ copying old implementation details.
 - Live smoke must print only scrubbed status lines. It must not print passwords,
   auth tokens, OMEMO secrets, APNs tokens, decrypted message bodies, or decrypted
   attachment contents.
+- The 2026-06-10 client QoL batch (persistent drafts, chat-list
+  pin/mute/read actions, unread divider, macOS quick switcher/hotkeys/Dock
+  badge, offline outbox, media gallery) was verified with `TrixMatrixMac` and
+  `TrixMatrixiOS` debug builds plus the macOS unit suite: 165 tests, 0
+  failures. No live or credentialed XMPP smoke was run for these items.
+- A same-day independent review of that batch produced fixes that are now in:
+  stable origin-id across outbox retries, draft survival on reply/thread
+  cancel, outbox cleared on explicit sign-out, an LRU cap (32 entries) on
+  resident inline attachment previews, per-iteration outbox queue reloads,
+  `undefined_condition` reclassified as fatal, account-id AAD binding for the
+  draft and outbox stores, and a main-actor hop instead of
+  `MainActor.assumeIsolated` in the Dock badge sink. Verified with both debug
+  builds and the macOS unit suite (168 tests, 0 failures); still no live
+  smoke.

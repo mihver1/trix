@@ -1423,6 +1423,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 body,
                 roomID: peerJID,
                 metadata: request.metadata,
+                preferredMessageID: request.preferredMessageID,
                 session: session,
                 connection: connection
             )
@@ -1434,7 +1435,12 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
                 throw TrixClientError.omemoDeviceTrustRequired
             }
             return try await sendText(
-                TrixTextMessageSendRequest(text: body, roomID: request.roomID, metadata: request.metadata),
+                TrixTextMessageSendRequest(
+                    text: body,
+                    roomID: request.roomID,
+                    metadata: request.metadata,
+                    preferredMessageID: request.preferredMessageID
+                ),
                 session: session
             )
         }
@@ -1447,7 +1453,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             allowedMentionTargets: Set([peerJID.lowercased(), accountJID.lowercased()]),
             allowThreads: false
         )
-        let messageID = "trix-\(UUID().uuidString)"
+        let messageID = request.preferredMessageID ?? "trix-\(UUID().uuidString)"
         let message = Message()
         message.id = messageID
         message.originId = messageID
@@ -4703,6 +4709,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
         _ body: String,
         roomID: String,
         metadata requestedMetadata: TrixTextMessageSendMetadata,
+        preferredMessageID: String? = nil,
         session: TrixSession,
         connection: Connection
     ) async throws -> TrixTimelineItem {
@@ -4723,7 +4730,7 @@ actor XMPPMartinService: TrixService, TrixReconnectService {
             allowThreads: true
         )
 
-        let messageID = "trix-group-\(UUID().uuidString)"
+        let messageID = preferredMessageID ?? "trix-group-\(UUID().uuidString)"
         let message = Message()
         message.id = messageID
         message.originId = messageID
